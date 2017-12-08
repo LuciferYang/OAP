@@ -17,17 +17,21 @@
 
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
+import java.io.ByteArrayOutputStream
+
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.JoinedRow
 import org.apache.spark.sql.execution.datasources.oap._
 import org.apache.spark.sql.execution.datasources.oap.index.{IndexScanner, IndexUtils}
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.sql.types.StructType
 
 
 class SampleBasedStatisticsSuite extends StatisticsTest{
 
-  class TestSample extends SampleBasedStatistics {
+  class TestSample(schema: StructType) extends SampleBasedStatistics(schema) {
     override def takeSample(keys: ArrayBuffer[Key], size: Int): Array[Key] = keys.take(size).toArray
     def getSampleArray: Array[Key] = sampleArray
   }
@@ -35,23 +39,21 @@ class SampleBasedStatisticsSuite extends StatisticsTest{
   test("test write function") {
     val keys = (1 to 300).map(i => rowGen(i)).toArray // keys needs to be sorted
 
-    val testSample = new TestSample
-    testSample.initialize(schema)
+    val testSample = new TestSample(schema)
     testSample.write(out, keys.to[ArrayBuffer])
 
-    var offset = 0L
-    val bytes = out.buf.toByteArray
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      == SampleBasedStatisticsType.id)
+    var offset = 0
+    val fiber = wrapToFiberCache(out)
+    assert(fiber.getInt(offset) == SampleBasedStatisticsType.id)
     offset += 4
-    val size = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
+    val size = fiber.getInt(offset)
     offset += 4
 
+    var rowOffset = 0
     for (i <- 0 until size) {
-      val rowSize = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      val row = Statistics.getUnsafeRow(schema.length, bytes, offset, rowSize).copy()
+      val row = nnkr.readKey(fiber, offset + size * 4 + rowOffset)._1
+      rowOffset = fiber.getInt(offset + i * 4)
       assert(ordering.compare(row, keys(i)) == 0)
-      offset += 4 + rowSize
     }
   }
 
@@ -63,15 +65,17 @@ class SampleBasedStatisticsSuite extends StatisticsTest{
     IndexUtils.writeInt(out, SampleBasedStatisticsType.id)
     IndexUtils.writeInt(out, size)
 
+    val tempWriter = new ByteArrayOutputStream()
     for (idx <- 0 until size) {
-      Statistics.writeInternalRow(converter, keys(idx), out)
+      nnkw.writeKey(tempWriter, keys(idx))
+      IndexUtils.writeInt(out, tempWriter.size)
     }
+    out.write(tempWriter.toByteArray)
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val testSample = new TestSample
-    testSample.initialize(schema)
-    testSample.read(bytes, 0)
+    val testSample = new TestSample(schema)
+    testSample.read(fiber, 0)
 
     val array = testSample.getSampleArray
 
@@ -83,15 +87,13 @@ class SampleBasedStatisticsSuite extends StatisticsTest{
   test("read and write") {
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
 
-    val sampleWrite = new TestSample
-    sampleWrite.initialize(schema)
+    val sampleWrite = new TestSample(schema)
     sampleWrite.write(out, keys.to[ArrayBuffer])
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val sampleRead = new TestSample
-    sampleRead.initialize(schema)
-    sampleRead.read(bytes, 0)
+    val sampleRead = new TestSample(schema)
+    sampleRead.read(fiber, 0)
 
     val array = sampleRead.getSampleArray
 
@@ -103,16 +105,16 @@ class SampleBasedStatisticsSuite extends StatisticsTest{
   test("test analyze function") {
     // TODO: Give a seed to Random in here and in SampleBasedStatistics without losing coverage
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
+    val dummyStart = new JoinedRow(InternalRow(1), IndexScanner.DUMMY_KEY_START)
+    val dummyEnd = new JoinedRow(InternalRow(300), IndexScanner.DUMMY_KEY_END)
 
-    val sampleWrite = new TestSample
-    sampleWrite.initialize(schema)
+    val sampleWrite = new TestSample(schema)
     sampleWrite.write(out, keys.to[ArrayBuffer])
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val sampleRead = new TestSample
-    sampleRead.initialize(schema)
-    sampleRead.read(bytes, 0)
+    val sampleRead = new TestSample(schema)
+    sampleRead.read(fiber, 0)
 
     generateInterval(rowGen(-10), rowGen(-1), startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.USE_INDEX)
@@ -120,31 +122,31 @@ class SampleBasedStatisticsSuite extends StatisticsTest{
     generateInterval(rowGen(301), rowGen(400), startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.USE_INDEX)
 
-    generateInterval(IndexScanner.DUMMY_KEY_START, IndexScanner.DUMMY_KEY_END,
+    generateInterval(dummyStart, dummyEnd,
       startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.FULL_SCAN)
 
-    generateInterval(IndexScanner.DUMMY_KEY_START, rowGen(0),
+    generateInterval(dummyStart, rowGen(0),
       startInclude = true, endInclude = false)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.USE_INDEX)
 
-    generateInterval(IndexScanner.DUMMY_KEY_START, rowGen(300),
+    generateInterval(dummyStart, rowGen(300),
       startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.FULL_SCAN)
 
-    generateInterval(rowGen(0), IndexScanner.DUMMY_KEY_END,
+    generateInterval(rowGen(0), dummyEnd,
       startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.FULL_SCAN)
 
-    generateInterval(rowGen(1), IndexScanner.DUMMY_KEY_END,
+    generateInterval(rowGen(1), dummyEnd,
       startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.FULL_SCAN)
 
-    generateInterval(rowGen(300), IndexScanner.DUMMY_KEY_END,
+    generateInterval(rowGen(300), dummyEnd,
       startInclude = false, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.USE_INDEX)
 
-    generateInterval(rowGen(301), IndexScanner.DUMMY_KEY_END,
+    generateInterval(rowGen(301), dummyEnd,
       startInclude = true, endInclude = true)
     assert(sampleRead.analyse(intervalArray) == StaticsAnalysisResult.USE_INDEX)
   }

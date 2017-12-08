@@ -17,15 +17,19 @@
 
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
+import java.io.ByteArrayOutputStream
+
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.JoinedRow
 import org.apache.spark.sql.execution.datasources.oap.index.{IndexScanner, IndexUtils}
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.sql.types.StructType
 
 
 class PartByValueStatisticsSuite extends StatisticsTest{
 
-  class TestPartByValue extends PartByValueStatistics {
+  class TestPartByValue(schema: StructType) extends PartByValueStatistics(schema) {
     def getMetas: ArrayBuffer[PartedByValueMeta] = metas
   }
 
@@ -43,32 +47,28 @@ class PartByValueStatisticsSuite extends StatisticsTest{
   test("test write function") {
     val keys = (1 to 300).map(i => rowGen(i)).toArray // keys needs to be sorted
 
-    val testPartByValue = new TestPartByValue
-    testPartByValue.initialize(schema)
+    val testPartByValue = new TestPartByValue(schema)
     testPartByValue.write(out, keys.to[ArrayBuffer])
 
-    var offset = 0L
-    val bytes = out.buf.toByteArray
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      == PartByValueStatisticsType.id)
+    var offset = 0
+    val fiber = wrapToFiberCache(out)
+    assert(fiber.getInt(offset) == PartByValueStatisticsType.id)
     offset += 4
 
     val part = StatisticsManager.partNumber + 1
     val cntPerPart = keys.length / (part - 1)
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset) == part)
+    assert(fiber.getInt(offset) == part)
     offset += 4
 
+    var rowOffset = 0
     for (i <- 0 until part) {
       val curMaxIdx = Math.min(i * cntPerPart, keys.length - 1)
-      val size = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      val row = Statistics.getUnsafeRow(schema.length, bytes, offset, size)
-      checkInternalRow(row, converter(keys(curMaxIdx))) // row
-      offset += size + 4
+      assert(fiber.getInt(offset + i * 12) == curMaxIdx) // index
+      assert(fiber.getInt(offset + i * 12 + 4) == (curMaxIdx + 1)) // count
 
-      assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset) == curMaxIdx) // index
-      assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset + 4)
-        == (curMaxIdx + 1)) // count
-      offset += 8
+      val row = nnkr.readKey(fiber, offset + part * 12 + rowOffset)._1
+      rowOffset = fiber.getInt(offset + i * 12 + 8)
+      checkInternalRow(row, keys(curMaxIdx)) // row
     }
   }
 
@@ -82,16 +82,18 @@ class PartByValueStatisticsSuite extends StatisticsTest{
 
     IndexUtils.writeInt(out, PartByValueStatisticsType.id)
     IndexUtils.writeInt(out, partNum)
+    val tempWriter = new ByteArrayOutputStream()
     for (i <- content.indices) {
-      Statistics.writeInternalRow(converter, rowGen(content(i)), out)
+      nnkw.writeKey(tempWriter, rowGen(content(i)))
       IndexUtils.writeInt(out, curMaxId(i))
       IndexUtils.writeInt(out, curAccumuCount(i))
+      IndexUtils.writeInt(out, tempWriter.size())
     }
+    out.write(tempWriter.toByteArray)
 
-    val bytes = out.buf.toByteArray
-    val testPartByValue = new TestPartByValue
-    testPartByValue.initialize(schema)
-    testPartByValue.read(bytes, 0)
+    val fiber = wrapToFiberCache(out)
+    val testPartByValue = new TestPartByValue(schema)
+    testPartByValue.read(fiber, 0)
 
     val metas = testPartByValue.getMetas
     for (i <- metas.indices) {
@@ -107,15 +109,13 @@ class PartByValueStatisticsSuite extends StatisticsTest{
   test("read and write") {
     val keys = (1 to 300).map(i => rowGen(i)).toArray // keys needs to be sorted
 
-    val partByCalueWrite = new TestPartByValue
-    partByCalueWrite.initialize(schema)
-    partByCalueWrite.write(out, keys.to[ArrayBuffer])
+    val partByValueWrite = new TestPartByValue(schema)
+    partByValueWrite.write(out, keys.to[ArrayBuffer])
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val partByValueRead = new TestPartByValue
-    partByValueRead.initialize(schema)
-    partByValueRead.read(bytes, 0)
+    val partByValueRead = new TestPartByValue(schema)
+    partByValueRead.read(fiber, 0)
 
     val content = Array(1, 61, 121, 181, 241, 300)
     val curMaxId = Array(0, 60, 120, 180, 240, 299)
@@ -133,18 +133,18 @@ class PartByValueStatisticsSuite extends StatisticsTest{
 
   test("test analyze function") {
     val keys = (1 to 300).map(i => rowGen(i)).toArray // keys needs to be sorted
+    val dummyStart = new JoinedRow(InternalRow(1), IndexScanner.DUMMY_KEY_START)
+    val dummyEnd = new JoinedRow(InternalRow(300), IndexScanner.DUMMY_KEY_END)
 
-    val partByCalueWrite = new TestPartByValue
-    partByCalueWrite.initialize(schema)
-    partByCalueWrite.write(out, keys.to[ArrayBuffer])
+    val partByValueWrite = new TestPartByValue(schema)
+    partByValueWrite.write(out, keys.to[ArrayBuffer])
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val partByValueRead = new TestPartByValue
-    partByValueRead.initialize(schema)
-    partByValueRead.read(bytes, 0)
+    val partByValueRead = new TestPartByValue(schema)
+    partByValueRead.read(fiber, 0)
 
-    generateInterval(IndexScanner.DUMMY_KEY_START, IndexScanner.DUMMY_KEY_END, true, true)
+    generateInterval(dummyStart, dummyEnd, true, true)
     assert(partByValueRead.analyse(intervalArray) == 1.0)
 
     generateInterval(rowGen(1), rowGen(301), true, true)

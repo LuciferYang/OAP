@@ -21,43 +21,40 @@ import java.io.ByteArrayOutputStream
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.hadoop.mapreduce.{RecordWriter, TaskAttemptContext}
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.codegen.{BaseOrdering, GenerateOrdering}
-import org.apache.spark.sql.execution.datasources.oap.index.{BloomFilter, IndexOutputWriter, RangeInterval}
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
+import org.apache.spark.sql.execution.datasources.oap.index.RangeInterval
+import org.apache.spark.sql.execution.datasources.oap.utils.{NonNullKeyReader, NonNullKeyWriter}
 import org.apache.spark.sql.types.{IntegerType, StringType, StructField, StructType}
+import org.apache.spark.unsafe.Platform
+import org.apache.spark.unsafe.memory.MemoryBlock
 import org.apache.spark.unsafe.types.UTF8String
 
 abstract class StatisticsTest extends SparkFunSuite with BeforeAndAfterEach {
-  protected class TestIndexOutputWriter extends IndexOutputWriter(bucketId = None, context = null) {
-    val buf = new ByteArrayOutputStream(8000)
-    override protected lazy val writer: RecordWriter[Void, Any] =
-      new RecordWriter[Void, Any] {
-        override def close(context: TaskAttemptContext) = buf.close()
-        override def write(key: Void, value: Any) = value match {
-          case bytes: Array[Byte] => buf.write(bytes)
-          case i: Int => buf.write(i) // this will only write a byte
-        }
-      }
-  }
 
   protected def rowGen(i: Int): InternalRow = InternalRow(i, UTF8String.fromString(s"test#$i"))
 
-  protected var schema: StructType = StructType(StructField("a", IntegerType)
+  protected lazy val schema: StructType = StructType(StructField("a", IntegerType)
     :: StructField("b", StringType) :: Nil)
-
-  @transient lazy protected val converter: UnsafeProjection = UnsafeProjection.create(schema)
-  @transient lazy protected val ordering: BaseOrdering = GenerateOrdering.create(schema)
-  protected var out: TestIndexOutputWriter = _
+  @transient
+  protected lazy val nnkw: NonNullKeyWriter = new NonNullKeyWriter(schema)
+  @transient
+  protected lazy val nnkr: NonNullKeyReader = new NonNullKeyReader(schema)
+  @transient
+  protected lazy val ordering: BaseOrdering = GenerateOrdering.create(schema)
+  @transient
+  protected lazy val partialOrdering: BaseOrdering =
+    GenerateOrdering.create(StructType(schema.dropRight(1)))
+  protected var out: ByteArrayOutputStream = _
 
   protected var intervalArray: ArrayBuffer[RangeInterval] = new ArrayBuffer[RangeInterval]()
 
   override def beforeEach(): Unit = {
-    out = new TestIndexOutputWriter
+    out = new ByteArrayOutputStream(8000)
   }
 
   override def afterEach(): Unit = {
@@ -65,27 +62,22 @@ abstract class StatisticsTest extends SparkFunSuite with BeforeAndAfterEach {
     intervalArray.clear()
   }
 
-  protected def generateInterval(start: InternalRow, end: InternalRow,
-                                 startInclude: Boolean, endInclude: Boolean) = {
+  protected def generateInterval(
+      start: InternalRow, end: InternalRow,
+      startInclude: Boolean, endInclude: Boolean): Unit = {
     intervalArray.clear()
     intervalArray.append(new RangeInterval(start, end, startInclude, endInclude))
   }
 
-  protected def checkInternalRow(row1: InternalRow, row2: InternalRow) = {
+  protected def checkInternalRow(row1: InternalRow, row2: InternalRow): Unit = {
     val res = row1 == row2 // it works..
     assert(res, s"row1: $row1 does not match $row2")
   }
 
-  protected def checkBloomFilter(bf1: BloomFilter, bf2: BloomFilter) = {
-    val res =
-      if (bf1.getNumOfHashFunc != bf2.getNumOfHashFunc) false
-      else {
-        val bitLongArray1 = bf1.getBitMapLongArray
-        val bitLongArray2 = bf2.getBitMapLongArray
-
-        bitLongArray1.length == bitLongArray2.length && bitLongArray1.zip(bitLongArray2)
-          .map(t => t._1 == t._2).reduceOption(_ && _).getOrElse(true)
-      }
-    assert(res, "bloom filter does not match")
-  }
+  protected def wrapToFiberCache(out: ByteArrayOutputStream): FiberCache =
+    new FiberCache {
+      val bytes = out.toByteArray
+      override protected def fiberData: MemoryBlock =
+        new MemoryBlock(bytes, Platform.BYTE_ARRAY_OFFSET, bytes.length)
+    }
 }

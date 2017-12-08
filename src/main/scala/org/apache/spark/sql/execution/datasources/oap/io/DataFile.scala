@@ -25,7 +25,7 @@ import org.apache.parquet.column.Dictionary
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.OapException
-import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberCache
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
@@ -33,21 +33,23 @@ import org.apache.spark.util.Utils
 abstract class DataFile {
   def path: String
   def schema: StructType
+  def configuration: Configuration
 
-  def createDataFileHandle(conf: Configuration): DataFileHandle
-  def getFiberData(groupId: Int, fiberId: Int, conf: Configuration): DataFiberCache
+  def createDataFileHandle(): DataFileHandle
+  def getFiberData(groupId: Int, fiberId: Int, conf: Configuration): FiberCache
   def iterator(conf: Configuration, requiredIds: Array[Int]): Iterator[InternalRow]
-  def iterator(conf: Configuration, requiredIds: Array[Int], rowIds: Array[Long])
+  def iterator(conf: Configuration, requiredIds: Array[Int], rowIds: Array[Int])
   : Iterator[InternalRow]
   def getDictionary(fiberId: Int, conf: Configuration): Dictionary
 }
 
 private[oap] object DataFile {
-  def apply(path: String, schema: StructType, dataFileClassName: String): DataFile = {
+  def apply(path: String, schema: StructType, dataFileClassName: String,
+            configuration: Configuration): DataFile = {
     Try(Utils.classForName(dataFileClassName).getDeclaredConstructor(
-      classOf[String], classOf[StructType])).toOption match {
+      classOf[String], classOf[StructType], classOf[Configuration])).toOption match {
       case Some(ctor) =>
-        Try (ctor.newInstance(path, schema).asInstanceOf[DataFile]) match {
+        Try (ctor.newInstance(path, schema, configuration).asInstanceOf[DataFile]) match {
           case Success(e) => e
           case Failure(e) =>
             throw new OapException(s"Cannot instantiate class $dataFileClassName", e)
@@ -67,4 +69,10 @@ private[oap] object DataFile {
 abstract class DataFileHandle {
   def fin: FSDataInputStream
   def len: Long
+
+  def close(): Unit = {
+    if (fin != null) {
+      fin.close()
+    }
+  }
 }

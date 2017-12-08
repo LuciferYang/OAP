@@ -24,36 +24,125 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{SortDirection, UnsafeRow}
 import org.apache.spark.sql.execution.datasources.oap._
+import org.apache.spark.sql.execution.datasources.oap.io.OapIndexInfo
+import org.apache.spark.sql.execution.datasources.oap.statistics.StaticsAnalysisResult
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types.StructType
 
 
 private[oap] object IndexScanner {
-  val DUMMY_KEY_START: Key = InternalRow(Array[Any](): _*) // we compare the ref not the value
-  val DUMMY_KEY_END: Key = InternalRow(Array[Any](): _*) // we compare the ref not the value
+  val DUMMY_KEY_START: Key = new UnsafeRow() // we compare the ref not the value
+  val DUMMY_KEY_END: Key = new UnsafeRow() // we compare the ref not the value
 }
 
-
 private[oap] abstract class IndexScanner(idxMeta: IndexMeta)
-  extends Iterator[Long] with Serializable with Logging{
+  extends Iterator[Int] with Serializable with Logging{
 
   // TODO Currently, only B+ tree supports indexs, so this flag is toggled only in
   // BPlusTreeScanner we can add other index-aware stats for other type of index later
   def canBeOptimizedByStatistics: Boolean = false
 
-  @transient protected var ordering: Ordering[Key] = _
   var intervalArray: ArrayBuffer[RangeInterval] = _
+
   protected var keySchema: StructType = _
 
+  /**
+   * Scan N items from each index entry.
+   */
+  private var _internalLimit : Int = 0
+
+  // _internalLimit setter
+  def internalLimit_= (scanNum : Int) : Unit = _internalLimit = scanNum
+
+  // _internalLimit getter
+  def internalLimit : Int = _internalLimit
+
+  def indexEntryScanIsLimited() : Boolean = _internalLimit > 0
+
   def meta: IndexMeta = idxMeta
+
   def getSchema: StructType = keySchema
 
-  def existRelatedIndexFile(dataPath: Path, conf: Configuration): Boolean = {
-    val path = IndexUtils.indexFileFromDataFile(dataPath, meta.name, meta.time)
-    path.getFileSystem(conf).exists(path)
+  def indexIsAvailable(dataPath: Path, conf: Configuration): Boolean = {
+    val indexPath = IndexUtils.indexFileFromDataFile(dataPath, meta.name, meta.time)
+    if (!indexPath.getFileSystem(conf).exists(indexPath)) {
+      logDebug("No index file exist for data file: " + dataPath)
+      false
+    } else {
+      val start = System.currentTimeMillis()
+      val enableOIndex = conf.getBoolean(SQLConf.OAP_ENABLE_OINDEX.key,
+        SQLConf.OAP_ENABLE_OINDEX.defaultValue.get)
+      val useIndex = enableOIndex && canUseIndex(indexPath, dataPath, conf)
+      val end = System.currentTimeMillis()
+      logDebug("Index Selection Time (Executor): " + (end - start) + "ms")
+      if (!useIndex) {
+        logWarning("OAP index is skipped. Set below flags to force enable index,\n" +
+            "sqlContext.conf.setConfString(SQLConf.OAP_USE_INDEX_FOR_DEVELOPERS.key, true) or \n" +
+            "sqlContext.conf.setConfString(SQLConf.OAP_EXECUTOR_INDEX_SELECTION.key, false)")
+        false
+      } else {
+        OapIndexInfo.partitionOapIndex.put(dataPath.toString, true)
+        logInfo("Partition File " + dataPath.toString + " will use OAP index.\n")
+        true
+      }
+    }
   }
+
+  /**
+   * Executor chooses to use index or not according to policies.
+   *  1. OAP_EXECUTOR_INDEX_SELECTION is enabled.
+   *  2. Statistics info recommends index scan.
+   *  3. Considering about file I/O, index file size should be less
+   *     than data file.
+   *  4. TODO: add more.
+   *
+   * @param indexPath: index file path.
+   * @param conf: configurations
+   * @return Boolean to indicate if executor chooses to use index.
+   */
+  private def canUseIndex(indexPath: Path, dataPath: Path, conf: Configuration): Boolean = {
+    if (conf.getBoolean(SQLConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.key,
+      SQLConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.defaultValue.get)) {
+      // Index selection is enabled, executor chooses index according to policy.
+
+      // Policy 1: index file size < data file size.
+      val indexFileSize = indexPath.getFileSystem(conf).getContentSummary(indexPath).getLength
+      val dataFileSize = dataPath.getFileSystem(conf).getContentSummary(dataPath).getLength
+      val ratio = conf.getDouble(SQLConf.OAP_INDEX_FILE_SIZE_MAX_RATIO.key,
+        SQLConf.OAP_INDEX_FILE_SIZE_MAX_RATIO.defaultValue.get)
+      if (indexFileSize > dataFileSize * ratio) return false
+
+      // Policy 2: statistics tells the scan cost
+      val statsAnalyseResult = tryToReadStatistics(indexPath, conf)
+      statsAnalyseResult == StaticsAnalysisResult.USE_INDEX
+
+      // More Policies
+    } else {
+      // Index selection is disabled, executor always uses index.
+      true
+    }
+  }
+
+  /**
+   * Through getting statistics from related index file,
+   * judging if we should bypass this datafile or full scan or by index.
+   * return -1 means bypass, close to 1 means full scan and close to 0 means by index.
+   * called before invoking [[initialize]].
+   */
+  private def tryToReadStatistics(indexPath: Path, conf: Configuration): Double = {
+    if (!canBeOptimizedByStatistics) {
+      StaticsAnalysisResult.USE_INDEX
+    } else if (intervalArray.isEmpty) {
+      StaticsAnalysisResult.SKIP_INDEX
+    } else {
+      readStatistics(indexPath, conf)
+    }
+  }
+
+  protected def readStatistics(indexPath: Path, conf: Configuration): Double = 0
 
   def withKeySchema(schema: StructType): IndexScanner = {
     this.keySchema = schema
@@ -67,7 +156,7 @@ private[oap] abstract class IndexScanner(idxMeta: IndexMeta)
 private[oap] object DUMMY_SCANNER extends IndexScanner(null) {
   override def initialize(path: Path, configuration: Configuration): IndexScanner = { this }
   override def hasNext: Boolean = false
-  override def next(): Long = throw new NoSuchElementException("end of iterating.")
+  override def next(): Int = throw new NoSuchElementException("end of iterating.")
   override def meta: IndexMeta = throw new NotImplementedError()
 }
 
@@ -101,8 +190,7 @@ private[oap] object ScannerBuilder extends Logging {
     leftMap
   }
 
-  def optimizeFilterBound(filter: Filter, ic: IndexContext)
-  : mutable.HashMap[String, ArrayBuffer[RangeInterval]] = {
+  def optimizeFilterBound(filter: Filter, ic: IndexContext): IntervalArrayMap = {
     filter match {
       case And(leftFilter, rightFilter) =>
         val leftMap = optimizeFilterBound(leftFilter, ic)
@@ -112,20 +200,62 @@ private[oap] object ScannerBuilder extends Logging {
         val leftMap = optimizeFilterBound(leftFilter, ic)
         val rightMap = optimizeFilterBound(rightFilter, ic)
         combineIntervalMaps(leftMap, rightMap, ic, needMerge = false)
+      case In(attribute, ic(keys)) =>
+        val eqBounds = keys.distinct
+          .map(key => RangeInterval(key, key, includeStart = true, includeEnd = true))
+          .to[ArrayBuffer]
+        mutable.HashMap(attribute -> eqBounds)
       case EqualTo(attribute, ic(key)) =>
-        val ranger = new RangeInterval(key, key, true, true)
-        scala.collection.mutable.HashMap(attribute -> ArrayBuffer(ranger))
+        val ranger = RangeInterval(key, key, includeStart = true, includeEnd = true)
+        mutable.HashMap(attribute -> ArrayBuffer(ranger))
       case GreaterThanOrEqual(attribute, ic(key)) =>
-        val ranger = new RangeInterval(key, IndexScanner.DUMMY_KEY_END, true, true)
+        val ranger =
+          RangeInterval(
+            key,
+            IndexScanner.DUMMY_KEY_END,
+            includeStart = true,
+            includeEnd = true)
         mutable.HashMap(attribute -> ArrayBuffer(ranger))
       case GreaterThan(attribute, ic(key)) =>
-        val ranger = new RangeInterval(key, IndexScanner.DUMMY_KEY_END, false, true)
+        val ranger =
+          RangeInterval(
+            key,
+            IndexScanner.DUMMY_KEY_END,
+            includeStart = false,
+            includeEnd = true)
         mutable.HashMap(attribute -> ArrayBuffer(ranger))
       case LessThanOrEqual(attribute, ic(key)) =>
-        val ranger = new RangeInterval(IndexScanner.DUMMY_KEY_START, key, true, true)
+        val ranger =
+          RangeInterval(
+            IndexScanner.DUMMY_KEY_START,
+            key,
+            includeStart = true,
+            includeEnd = true)
         mutable.HashMap(attribute -> ArrayBuffer(ranger))
       case LessThan(attribute, ic(key)) =>
-        val ranger = new RangeInterval(IndexScanner.DUMMY_KEY_START, key, true, false)
+        val ranger =
+          RangeInterval(
+            IndexScanner.DUMMY_KEY_START,
+            key,
+            includeStart = true,
+            includeEnd = false)
+        mutable.HashMap(attribute -> ArrayBuffer(ranger))
+      case IsNotNull(attribute) =>
+        val ranger =
+          RangeInterval(
+            IndexScanner.DUMMY_KEY_START,
+            IndexScanner.DUMMY_KEY_END,
+            includeStart = true,
+            includeEnd = true)
+        mutable.HashMap(attribute -> ArrayBuffer(ranger))
+      case IsNull(attribute) =>
+        val ranger =
+          RangeInterval(
+            IndexScanner.DUMMY_KEY_START,
+            IndexScanner.DUMMY_KEY_END,
+            includeStart = true,
+            includeEnd = true,
+            isNull = true)
         mutable.HashMap(attribute -> ArrayBuffer(ranger))
       case _ => mutable.HashMap.empty
     }
@@ -141,15 +271,20 @@ private[oap] object ScannerBuilder extends Logging {
       case LessThanOrEqual(ic(indexer), _) => true
       case Or(ic(indexer), _) => true
       case And(ic(indexer), _) => true
+      case In(ic(indexer), _) => true
       case _ => false
     }
   }
 
-  def build(filters: Array[Filter], ic: IndexContext): Array[Filter] = {
+  def build(
+      filters: Array[Filter],
+      ic: IndexContext,
+      scannerOptions: Map[String, String] = Map.empty,
+      maxChooseSize: Int = 1): Array[Filter] = {
     if (filters == null || filters.isEmpty) return filters
     logDebug("Transform filters into Intervals:")
     val intervalMapArray = filters.map(optimizeFilterBound(_, ic))
-    // reduce multiple hashMap to one hashMap(AND operation)
+    // reduce multiple hashMap to one hashMap("AND" operation)
     val intervalMap = intervalMapArray.reduce(
       (leftMap, rightMap) =>
         if (leftMap == null || leftMap.isEmpty) rightMap
@@ -157,16 +292,55 @@ private[oap] object ScannerBuilder extends Logging {
         else combineIntervalMaps(leftMap, rightMap, ic, needMerge = true)
     )
 
-    if (intervalMap != null) {
+    if (intervalMap.nonEmpty) {
       intervalMap.foreach(intervals =>
         logDebug("\t" + intervals._1 + ": " + intervals._2.mkString(" - ")))
 
-      ic.selectAvailableIndex(intervalMap)
-      val (num, idxMeta) = ic.getBestIndexer(intervalMap.size)
-      ic.buildScanner(num, idxMeta, intervalMap)
+      ic.buildScanners(intervalMap, scannerOptions, maxChooseSize)
     }
 
     filters.filterNot(canSupport(_, ic))
   }
 
 }
+
+private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
+  extends Iterator[Int] with Serializable with Logging{
+
+  private var actualUsedScanners: Seq[IndexScanner] = _
+
+  private var backendIter: Iterator[Int] = _
+
+  def indexIsAvailable(dataPath: Path, conf: Configuration): Boolean = {
+    actualUsedScanners = scanners.filter(_.indexIsAvailable(dataPath, conf))
+    actualUsedScanners.nonEmpty
+  }
+
+  def order: SortDirection = actualUsedScanners.head.meta.indexType.indexOrder.head
+
+  def initialize(dataPath: Path, conf: Configuration): IndexScanners = {
+    backendIter = actualUsedScanners.length match {
+      case 0 => Iterator.empty
+      case 1 =>
+        actualUsedScanners.head.initialize(dataPath, conf)
+        actualUsedScanners.head.toArray.iterator
+      case _ =>
+        actualUsedScanners.par.foreach(_.initialize(dataPath, conf))
+        actualUsedScanners.map(_.toArray)
+          .sortBy(_.length)
+          .reduce((left, right) => {
+            if (left.isEmpty) left
+            else left.intersect(right)
+          }).iterator
+    }
+    this
+  }
+
+  override def hasNext: Boolean = backendIter.hasNext
+
+  override def next(): Int = backendIter.next
+
+  override def toString(): String = scanners.map(_.toString()).mkString("|")
+
+}
+

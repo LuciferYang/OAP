@@ -17,15 +17,16 @@
 
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
+import java.io.{ByteArrayOutputStream, OutputStream}
+
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.UnsafeProjection
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateOrdering
 import org.apache.spark.sql.execution.datasources.oap.Key
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.oap.index._
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.unsafe.Platform
 
 // PartedByValueStatistics gives statistics with the value interval.
 // for example, in an array where all internal rows appear only once
@@ -39,18 +40,19 @@ import org.apache.spark.unsafe.Platform
 // (241,  "test#241")   240            241
 // (300,  "test#300")   299            300
 
-private[oap] class PartByValueStatistics extends Statistics {
+private[oap] class PartByValueStatistics(schema: StructType) extends Statistics(schema) {
   override val id: Int = PartByValueStatisticsType.id
-  @transient private lazy val converter = UnsafeProjection.create(schema)
 
   private lazy val maxPartNum: Int = StatisticsManager.partNumber
   @transient private lazy val ordering = GenerateOrdering.create(schema)
+  @transient private lazy val partialOrdering =
+    GenerateOrdering.create(StructType(schema.dropRight(1)))
 
-  protected case class PartedByValueMeta(idx: Int, row: InternalRow,
-                                         curMaxId: Int, accumulatorCnt: Int)
+  protected case class PartedByValueMeta(
+      idx: Int, row: InternalRow, curMaxId: Int, accumulatorCnt: Int)
   protected lazy val metas: ArrayBuffer[PartedByValueMeta] = new ArrayBuffer[PartedByValueMeta]()
 
-  override def write(writer: IndexOutputWriter, sortedKeys: ArrayBuffer[Key]): Long = {
+  override def write(writer: OutputStream, sortedKeys: ArrayBuffer[Key]): Int = {
     var offset = super.write(writer, sortedKeys)
     val hashMap = new java.util.HashMap[Key, Int]()
     val uniqueKeys: ArrayBuffer[Key] = new ArrayBuffer[Key]()
@@ -81,70 +83,90 @@ private[oap] class PartByValueStatistics extends Statistics {
 
     // start writing
     IndexUtils.writeInt(writer, metas.length)
+    val tempWriter = new ByteArrayOutputStream()
     metas.foreach(meta => {
-      offset += Statistics.writeInternalRow(converter, meta.row, writer)
+      nnkw.writeKey(tempWriter, meta.row)
       IndexUtils.writeInt(writer, meta.curMaxId)
       IndexUtils.writeInt(writer, meta.accumulatorCnt)
-      offset += 8
+      IndexUtils.writeInt(writer, tempWriter.size())
+      offset += 12
     })
+    offset += tempWriter.size
+    writer.write(tempWriter.toByteArray)
     offset
   }
 
-  override def read(bytes: Array[Byte], baseOffset: Long): Long = {
-    var offset = super.read(bytes, baseOffset) + baseOffset
+  override def read(fiberCache: FiberCache, offset: Int): Int = {
+    var readOffset = super.read(fiberCache, offset) + offset
 
-    val size = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-    offset += 4
+    val size = fiberCache.getInt(readOffset)
+    readOffset += 4
 
+    var rowOffset = 0
     for (i <- 0 until size) {
-      val rowSize = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      val row = Statistics.getUnsafeRow(schema.length, bytes, offset, rowSize).copy()
-      offset += rowSize + 4
-      val index = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      val count = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset + 4)
-      offset += 8
+      val row = nnkr.readKey(fiberCache, readOffset + size * 12 + rowOffset)._1
+      val index = fiberCache.getInt(readOffset + i * 12)
+      val count = fiberCache.getInt(readOffset + i * 12 + 4)
+      rowOffset = fiberCache.getInt(readOffset + i * 12 + 8)
       metas.append(PartedByValueMeta(i, row, index, count))
     }
-    offset - baseOffset
+    readOffset += (size * 12 + rowOffset)
+    readOffset - offset
   }
 
   //  meta id:             0       1       2       3       4       5
   //                       |_______|_______|_______|_______|_______|
   // interval id:        0     1       2       3       4       5      6
   // value array:(-inf, r0) [r0,r1) [r1,r2) [r2,r3) [r3,r4) [r4,r5]  (r5, +inf)
-  protected def getIntervalIdx(row: Key, include: Boolean): Int = {
-    var i = 0
-    while (i < metas.length && (include && ordering.gteq(row, metas(i).row)
-      || !include && ordering.gt(row, metas(i).row))) i += 1
-    if (include && ordering.compare(metas.last.row, row) == 0) metas.last.idx // for row == r5
-    else i
+  private def getIntervalIdx(row: Key, include: Boolean, isStart: Boolean): Int = {
+    // Only two cases are accepted, or something is wrong.
+    // 1. meta.row = [1, "aaa"], row = [1, "bbb"] => row.numFields == schema.length
+    // 2. meta.row = [1, "aaa"], row = [1, DUMMY_KEY_START] => row.numFields == schema.length - 1
+    assert(row.numFields == schema.length || row.numFields == schema.length - 1,
+      s"Can't compare row with current schema. row: $row, schema: $schema")
+
+    metas.zipWithIndex.indexWhere {
+      case (meta, index) =>
+        if (row.numFields == schema.length) {
+          if (include && index < metas.length - 1) ordering.compare(row, meta.row) < 0
+          else ordering.compare(row, meta.row) <= 0
+        } else {
+          if (isStart) partialOrdering.compare(row, meta.row) <= 0
+          else partialOrdering.compare(row, meta.row) < 0
+        }
+    }
+  }
+
+  protected def getIntervalIdxForStart(start: Key, include: Boolean): Int = {
+    getIntervalIdx(start, include, isStart = true)
+  }
+
+  protected def getIntervalIdxForEnd(end: Key, include: Boolean): Int = {
+    getIntervalIdx(end, include, isStart = false)
   }
 
   override def analyse(intervalArray: ArrayBuffer[RangeInterval]): Double = {
     val wholeCount = metas.last.accumulatorCnt
-    val partNum = metas.length - 1
 
     val start = intervalArray.head
     val end = intervalArray.last
-    val left = if (start.start == IndexScanner.DUMMY_KEY_START) 0
-      else getIntervalIdx(start.start, start.startInclude)
-    val right = if (end.end == IndexScanner.DUMMY_KEY_END) metas.length + 1
-      else getIntervalIdx(end.end, end.endInclude)
 
-    if (left == partNum + 1 || right == 0) {
+    val left = getIntervalIdxForStart(start.start, start.startInclude)
+    val right = getIntervalIdxForEnd(end.end, end.endInclude)
+
+    if (left == -1 || right == 0) {
       // interval.min > partition.max || interval.max < partition.min
       StaticsAnalysisResult.SKIP_INDEX
     } else {
       var cover: Double =
-        if (right <= partNum) metas(right).accumulatorCnt else metas.last.accumulatorCnt
-      if (start.start != IndexScanner.DUMMY_KEY_START && left > 0 &&
-        ordering.lteq(start.start, metas(left).row)) {
+        if (right != -1) metas(right).accumulatorCnt else metas.last.accumulatorCnt
+
+      if (left > 0) {
         cover -= metas(left - 1).accumulatorCnt
         cover += 0.5 * (metas(left).accumulatorCnt - metas(left - 1).accumulatorCnt)
       }
 
-      if (end.end != IndexScanner.DUMMY_KEY_END && right <= partNum &&
-        ordering.gteq(end.end, metas(right - 1).row)) {
+      if (right != -1) {
         cover -= 0.5 * (metas(right).accumulatorCnt - metas(right - 1).accumulatorCnt)
       }
 

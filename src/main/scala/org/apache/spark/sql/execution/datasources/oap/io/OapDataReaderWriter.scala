@@ -22,15 +22,24 @@ import org.apache.hadoop.fs.{FSDataOutputStream, Path}
 import org.apache.parquet.format.CompressionCodec
 import org.apache.parquet.io.api.Binary
 
+import org.apache.spark.executor.custom.CustomManager
 import org.apache.spark.internal.Logging
+import org.apache.spark.SparkConf
+import org.apache.spark.scheduler.SparkListenerOapIndexInfoUpdate
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.Ascending
 import org.apache.spark.sql.execution.datasources.oap.{DataSourceMeta, OapFileFormat}
-import org.apache.spark.sql.execution.datasources.oap.filecache.{DataFiberBuilder, FiberCacheManager}
+import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberBuilder
 import org.apache.spark.sql.execution.datasources.oap.index._
-import org.apache.spark.sql.execution.datasources.oap.statistics._
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.datasources.oap.utils.OapIndexInfoStatusSerDe
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.util.TimeStampedHashMap
+
+class OapIndexHeartBeatMessager extends CustomManager with Logging {
+  override def status(conf: SparkConf): String = {
+    OapIndexInfo.status
+  }
+}
 
 // TODO: [linhong] Let's remove the `isCompressed` argument
 private[oap] class OapDataWriter(
@@ -55,8 +64,11 @@ private[oap] class OapDataWriter(
 
   private val statisticsArray = ColumnStatistics.getStatsFromSchema(schema)
 
-  private def updateStats(stats: ColumnStatistics.ParquetStatistics,
-                          row: InternalRow, index: Int, dataType: DataType) = {
+  private def updateStats(
+      stats: ColumnStatistics.ParquetStatistics,
+      row: InternalRow,
+      index: Int,
+      dataType: DataType): Unit = {
     dataType match {
       case BooleanType => stats.updateStats(row.getBoolean(index))
       case IntegerType => stats.updateStats(row.getInt(index))
@@ -80,8 +92,6 @@ private[oap] class OapDataWriter(
     codec = COMPRESSION_CODEC)
 
   private val codecFactory = new CodecFactory(conf)
-  private val compressor: BytesCompressor =
-    codecFactory.getCompressor(COMPRESSION_CODEC)
 
   def write(row: InternalRow) {
     var idx = 0
@@ -98,6 +108,7 @@ private[oap] class OapDataWriter(
 
   private def writeRowGroup(): Unit = {
     rowGroupCount += 1
+    val compressor: BytesCompressor = codecFactory.getCompressor(COMPRESSION_CODEC)
     val fiberLens = new Array[Int](rowGroup.length)
     val fiberUncompressedLens = new Array[Int](rowGroup.length)
     var idx: Int = 0
@@ -146,109 +157,81 @@ private[oap] class OapDataWriter(
         if (remainingRowCount != 0 || rowCount == 0) remainingRowCount else ROW_GROUP_SIZE)
 
     fiberMeta.write(out)
+    codecFactory.release()
     out.close()
+  }
+}
+
+private[oap] case class OapIndexInfoStatus(path: String, useIndex: Boolean)
+
+private[oap] object OapIndexInfo extends Logging {
+  val partitionOapIndex = new TimeStampedHashMap[String, Boolean](updateTimeStampOnGet = true)
+  def status: String = {
+    val indexInfoStatusSeq = partitionOapIndex.map(kv => OapIndexInfoStatus(kv._1, kv._2)).toSeq
+    val threshTime = System.currentTimeMillis()
+    partitionOapIndex.clearOldValues(threshTime)
+    logDebug("current partition files: \n" +
+      indexInfoStatusSeq.map { indexInfoStatus =>
+        "partition file: " + indexInfoStatus.path +
+          " use index: " + indexInfoStatus.useIndex + "\n" }.mkString("\n"))
+    val indexStatusRawData = OapIndexInfoStatusSerDe.serialize(indexInfoStatusSeq)
+    indexStatusRawData
+  }
+  def update(indexInfo: SparkListenerOapIndexInfoUpdate): Unit = {
+    val indexStatusRawData = OapIndexInfoStatusSerDe.deserialize(indexInfo.oapIndexInfo)
+    indexStatusRawData.foreach {oapIndexInfo =>
+      logInfo("\nhost " + indexInfo.hostName + " executor id: " + indexInfo.executorId +
+        "\npartition file: " + oapIndexInfo.path + " use OAP index: " + oapIndexInfo.useIndex)}
   }
 }
 
 private[oap] class OapDataReader(
   path: Path,
   meta: DataSourceMeta,
-  filterScanner: Option[IndexScanner],
+  filterScanners: Option[IndexScanners],
   requiredIds: Array[Int]) extends Logging {
 
-  def initialize(conf: Configuration): Iterator[InternalRow] = {
+  def initialize(conf: Configuration,
+                 options: Map[String, String] = Map.empty): Iterator[InternalRow] = {
     logDebug("Initializing OapDataReader...")
     // TODO how to save the additional FS operation to get the Split size
-    val fileScanner = DataFile(path.toString, meta.schema, meta.dataReaderClassName)
+    val fileScanner = DataFile(path.toString, meta.schema, meta.dataReaderClassName, conf)
 
-    val start = System.currentTimeMillis()
-    filterScanner match {
-      case Some(fs) if fs.existRelatedIndexFile(path, conf) =>
-        val indexPath = IndexUtils.indexFileFromDataFile(path, fs.meta.name, fs.meta.time)
+    filterScanners match {
+      case Some(indexScanners) if indexScanners.indexIsAvailable(path, conf) =>
+        def getRowIds(options: Map[String, String]): Array[Int] = {
+          indexScanners.initialize(path, conf)
 
-        val initFinished = System.currentTimeMillis()
-        val statsAnalyseResult = tryToReadStatistics(indexPath, conf)
-        val statsAnalyseFinished = System.currentTimeMillis()
+          // total Row count can be get from the index scanner
+          val limit = options.getOrElse(OapFileFormat.OAP_QUERY_LIMIT_OPTION_KEY, "0").toInt
+          val rowIds = if (limit > 0) {
+            // Order limit scan options
+            val isAscending = options.getOrElse(
+              OapFileFormat.OAP_QUERY_ORDER_OPTION_KEY, "true").toBoolean
+            val sameOrder =
+              !((indexScanners.order == Ascending) ^ isAscending)
 
-        /**
-         * [WORKAROUND] if index file is larger than cache.maximumWeight / cache.concurrencyLevel,
-         * it will be removed immediately after loading and MemoryBlock in FiberCache is freed.
-         * But the IndexFiberCache is still used by IndexScanner cause JVM crash. For now, we skip
-         * using index if index file is too large. To fix this, we need TODO:
-         * 1. A better way to config cache.maximumWeight to maximize the use of off heap memory
-         *    Currently, we let user to config this parameter and use a very small value in case
-         *    off heap memory overhead.
-         * 2. Split large fiber into small ones
-         *   Currently, index file is a very large fiber, and a column in row group is a fiber.
-         *   If row group is large, then fiber is large. We can expect a column in row group has
-         *   multiple fibers and index fiber can slit into several small parts.
-         * 3. Handle the exception if FiberCache is larger than maximumWeight / concurrencyLevel
-         */
-        val indexFileSize = indexPath.getFileSystem(conf).getContentSummary(indexPath).getLength
-        val iter =
-          if (indexFileSize > FiberCacheManager.getMaximumFiberSizeInBytes(conf)) {
-            logWarning(s"Index File size $indexFileSize B is too large and couldn't be cached." +
-              s"Please increase ${SQLConf.OAP_FIBERCACHE_SIZE.key} for better performance")
-            fileScanner.iterator(conf, requiredIds)
-          } else {
-            statsAnalyseResult match {
-              case StaticsAnalysisResult.FULL_SCAN =>
-                fileScanner.iterator(conf, requiredIds)
-              case StaticsAnalysisResult.USE_INDEX =>
-                fs.initialize(path, conf)
-                // total Row count can be get from the filter scanner
-                val rowIDs = fs.toArray.sorted
-                fileScanner.iterator(conf, requiredIds, rowIDs)
-              case StaticsAnalysisResult.SKIP_INDEX =>
-                Iterator.empty
-            }
-          }
+            if (sameOrder) indexScanners.take(limit).toArray
+            else indexScanners.toArray.reverse.take(limit)
+          } else indexScanners.toArray
 
-        val iteratorFinished = System.currentTimeMillis()
-        logDebug("Load Index: " + (initFinished - start) + "ms")
-        logDebug("Load Stats: " + (statsAnalyseFinished - initFinished) + "ms")
-        logDebug("Construct Iterator: " + (iteratorFinished - statsAnalyseFinished) + "ms")
+          // Parquet reader does not support backward scan, so rowIds must be sorted.
+          if (meta.dataReaderClassName.contains("ParquetDataFile")) rowIds.sorted
+          else rowIds
+        }
+
+        val start = System.currentTimeMillis()
+        val iter = fileScanner.iterator(conf, requiredIds, getRowIds(options))
+        val end = System.currentTimeMillis()
+        logDebug("Construct File Iterator: " + (end - start) + "ms")
         iter
       case _ =>
-        logDebug("No index file exist for data file: " + path)
-
+        val start = System.currentTimeMillis()
         val iter = fileScanner.iterator(conf, requiredIds)
-        val iteratorFinished = System.currentTimeMillis()
-        logDebug("Construct Iterator: " + (iteratorFinished - start) + "ms")
+        val end = System.currentTimeMillis()
+        logDebug("Construct File Iterator: " + (end - start) + "ms")
 
         iter
-    }
-  }
-
-  /**
-   * Through getting statistics from related index file,
-   * judging if we should bypass this datafile or full scan or by index.
-   * return -1 means bypass, close to 1 means full scan and close to 0 means by index.
-   */
-  private def tryToReadStatistics(indexPath: Path, conf: Configuration): Double = {
-    if (!filterScanner.get.canBeOptimizedByStatistics) {
-      StaticsAnalysisResult.USE_INDEX
-    } else if (filterScanner.get.intervalArray.isEmpty) {
-      StaticsAnalysisResult.SKIP_INDEX
-    } else {
-      val fs = indexPath.getFileSystem(conf)
-      val fin = fs.open(indexPath)
-
-      // read stats size
-      val fileLength = fs.getContentSummary(indexPath).getLength.toInt
-      val startPosArray = new Array[Byte](8)
-
-      fin.readFully(fileLength - 24, startPosArray)
-
-      val stBase = Platform.getLong(startPosArray, Platform.BYTE_ARRAY_OFFSET).toInt
-
-      val stsArray = new Array[Byte](fileLength - stBase)
-      fin.readFully(stBase, stsArray)
-      fin.close()
-
-      val statisticsManager = new StatisticsManager
-      statisticsManager.read(stsArray, filterScanner.get.getSchema)
-      statisticsManager.analyse(filterScanner.get.intervalArray, conf)
     }
   }
 }

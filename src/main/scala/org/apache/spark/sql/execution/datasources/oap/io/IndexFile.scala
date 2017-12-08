@@ -20,52 +20,33 @@ package org.apache.spark.sql.execution.datasources.oap.io
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.execution.datasources.oap.filecache.{DataFiberCache, IndexFiberCacheData, MemoryManager}
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.sql.execution.datasources.oap.filecache.{FiberCache, MemoryManager}
 
-
-/**
- * Read the index file into memory(offheap), and can be accessed as [[IndexFiberCacheData]].
- */
-private[oap] case class IndexFile(file: Path) {
-  private def putToFiberCache(buf: Array[Byte]): DataFiberCache = {
-    // TODO: make it configurable
-    val fiberCacheData = MemoryManager.allocate(buf.length)
-    Platform.copyMemory(
-      buf, Platform.BYTE_ARRAY_OFFSET, fiberCacheData.fiberData.getBaseObject,
-      fiberCacheData.fiberData.getBaseOffset, buf.length)
-    fiberCacheData
+private[oap] trait CommonIndexFile {
+  def file: Path
+  def version(conf: Configuration): Int = {
+    val fs = file.getFileSystem(conf)
+    val fin = fs.open(file)
+    val bytes = new Array[Byte](8)
+    fin.readFully(bytes, 0, 8)
+    fin.close()
+    (bytes(6) << 8) + bytes(7)
   }
-
-  def getIndexFiberData(conf: Configuration): IndexFiberCacheData = {
+}
+/**
+ * Read the index file into memory, and can be accessed as [[FiberCache]].
+ */
+private[oap] case class IndexFile(file: Path) extends CommonIndexFile {
+  def getIndexFiberData(conf: Configuration): FiberCache = {
     val fs = file.getFileSystem(conf)
     val fin = fs.open(file)
     // wind to end of file to get tree root
     // TODO check if enough to fit in Int
     val fileLength = fs.getContentSummary(file).getLength
-    var bytes = new Array[Byte](fileLength.toInt)
 
-    fin.readFully(0, bytes)
+    val fiberCache = MemoryManager.putToIndexFiberCache(fin, 0, fileLength.toInt)
     fin.close()
-    val offHeapMem = putToFiberCache(bytes)
-    bytes = null
-
-    val baseObj = offHeapMem.fiberData.getBaseObject
-    val baseOff = offHeapMem.fiberData.getBaseOffset
-    val dataEnd = Platform.getLong(baseObj, baseOff + fileLength - 16)
-    val rootOffset = Platform.getLong(baseObj, baseOff + fileLength - 8)
-
-    // TODO partial cached index fiber
-    IndexFiberCacheData(offHeapMem.fiberData, dataEnd, rootOffset)
-  }
-
-  def version(conf: Configuration): Int = {
-    val fs = file.getFileSystem(conf)
-    val fin = fs.open(file)
-    val bytes = new Array[Byte](8)
-    fin.read(bytes, 0, 8)
-    fin.close()
-    (bytes(6) << 8) + bytes(7)
+    fiberCache
   }
 }
 

@@ -16,15 +16,18 @@
  */
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
+import java.io.ByteArrayOutputStream
+
 import scala.util.Random
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.oap.index.{IndexScanner, IndexUtils}
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.sql.types.StructType
+
 
 class MinMaxStatisticsSuite extends StatisticsTest {
 
-  private class TestMinMax extends MinMaxStatistics {
+  private class TestMinMax(schema: StructType) extends MinMaxStatistics(schema) {
     def getMin: InternalRow = min
     def getMax: InternalRow = max
   }
@@ -32,8 +35,7 @@ class MinMaxStatisticsSuite extends StatisticsTest {
   test("write function test") {
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
 
-    val testMinMax = new TestMinMax
-    testMinMax.initialize(schema)
+    val testMinMax = new TestMinMax(schema)
     for (key <- keys) testMinMax.addOapKey(key)
     testMinMax.write(out, null) // MinMax does not need sortKeys parameter
 
@@ -44,34 +46,38 @@ class MinMaxStatisticsSuite extends StatisticsTest {
       assert(ordering.compare(key, max) <= 0)
     }
 
-    val bytes = out.buf.toByteArray
-    var offset = 0L
+    val fiber = wrapToFiberCache(out)
+    var offset = 0
 
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET) == MinMaxStatisticsType.id)
+    assert(fiber.getInt(0) == MinMaxStatisticsType.id)
     offset += 4
-    val minSize = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-    val minFromFile = Statistics.getUnsafeRow(schema.length, bytes, offset, minSize)
-    checkInternalRow(minFromFile, converter(rowGen(1)))
-    offset += (4 + minSize)
+    val minSize = fiber.getInt(offset)
+    offset += 4
+    val totalSize = fiber.getInt(offset + 4)
+    offset += 4
+    val minFromFile = nnkr.readKey(fiber, offset)._1
+    checkInternalRow(minFromFile, rowGen(1))
 
-    val maxSize = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-    val maxFromFile = Statistics.getUnsafeRow(schema.length, bytes, offset, maxSize)
-    checkInternalRow(maxFromFile, converter(rowGen(300)))
-    offset += (4 + minSize)
+    val maxFromFile = nnkr.readKey(fiber, offset + minSize)._1
+    checkInternalRow(maxFromFile, rowGen(300))
+    offset += (4 + totalSize)
   }
 
   test("read function test") {
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
 
     IndexUtils.writeInt(out, MinMaxStatisticsType.id)
-    Statistics.writeInternalRow(converter, rowGen(1), out)
-    Statistics.writeInternalRow(converter, rowGen(300), out)
+    val tempWriter = new ByteArrayOutputStream()
+    nnkw.writeKey(tempWriter, rowGen(1))
+    IndexUtils.writeInt(out, tempWriter.size)
+    nnkw.writeKey(tempWriter, rowGen(300))
+    IndexUtils.writeInt(out, tempWriter.size)
+    out.write(tempWriter.toByteArray)
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val testMinMax = new TestMinMax
-    testMinMax.initialize(schema)
-    testMinMax.read(bytes, 0)
+    val testMinMax = new TestMinMax(schema)
+    testMinMax.read(fiber, 0)
 
     val min = testMinMax.getMin
     val max = testMinMax.getMax
@@ -88,16 +94,14 @@ class MinMaxStatisticsSuite extends StatisticsTest {
   test("read and write") {
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
 
-    val minmaxWrite = new TestMinMax
-    minmaxWrite.initialize(schema)
+    val minmaxWrite = new TestMinMax(schema)
     for (key <- keys) minmaxWrite.addOapKey(key)
     minmaxWrite.write(out, null) // MinMax does not need sortKeys parameter
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val minmaxRead = new TestMinMax
-    minmaxRead.initialize(schema)
-    minmaxRead.read(bytes, 0)
+    val minmaxRead = new TestMinMax(schema)
+    minmaxRead.read(fiber, 0)
     val min = minmaxRead.getMin
     val max = minmaxRead.getMax
 
@@ -113,16 +117,14 @@ class MinMaxStatisticsSuite extends StatisticsTest {
   test("analyse function test") {
     val keys = Random.shuffle(1 to 300).map(i => rowGen(i)).toArray
 
-    val minmaxWrite = new TestMinMax
-    minmaxWrite.initialize(schema)
+    val minmaxWrite = new TestMinMax(schema)
     for (key <- keys) minmaxWrite.addOapKey(key)
     minmaxWrite.write(out, null) // MinMax does not need sortKeys parameter
 
-    val bytes = out.buf.toByteArray
+    val fiber = wrapToFiberCache(out)
 
-    val minmaxRead = new TestMinMax
-    minmaxRead.initialize(schema)
-    minmaxRead.read(bytes, 0)
+    val minmaxRead = new TestMinMax(schema)
+    minmaxRead.read(fiber, 0)
 
     generateInterval(rowGen(-10), rowGen(-1), startInclude = true, endInclude = true)
     assert(minmaxRead.analyse(intervalArray) == StaticsAnalysisResult.SKIP_INDEX)

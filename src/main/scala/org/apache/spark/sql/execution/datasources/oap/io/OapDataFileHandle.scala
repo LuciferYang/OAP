@@ -115,11 +115,8 @@ private[oap] class RowGroupMeta {
     this
   }
 }
-private[oap] class ColumnStatistics(
-                                         val min: Array[Byte],
-                                         val max: Array[Byte]
-                                       ) {
 
+private[oap] class ColumnStatistics(val min: Array[Byte], val max: Array[Byte]) {
   def hasNonNullValue: Boolean = min != null && max != null
 
   def isEmpty: Boolean = !hasNonNullValue
@@ -155,14 +152,14 @@ private[oap] object ColumnStatistics {
     val minLength = in.readInt()
     val min = if (minLength != 0) {
       val bytes = new Array[Byte](minLength)
-      in.read(bytes)
+      in.readFully(bytes)
       bytes
     } else null
 
     val maxLength = in.readInt()
     val max = if (maxLength != 0) {
       val bytes = new Array[Byte](maxLength)
-      in.read(bytes)
+      in.readFully(bytes)
       bytes
     } else null
 
@@ -286,7 +283,7 @@ private[oap] class OapDataFileHandle(
     os.writeInt(this.fieldCount)
     os.writeInt(this.codec.getValue)
 
-    columnsMeta.foreach{ case ColumnMeta(bytes) => os.write(bytes) }
+    columnsMeta.foreach { case ColumnMeta(bytes) => os.write(bytes) }
 
     rowGroupsMeta.foreach(_.write(os))
     val endPos = os.getPos
@@ -302,17 +299,17 @@ private[oap] class OapDataFileHandle(
 
     // seek to the position of data file handle length
     is.seek(oapDataFileHandleLengthIndex)
-    val spianchDataFileHandleLength = is.readInt()
+    val oapDataFileHandleLength = is.readInt()
 
     // read all bytes of data file handle
-    val metaBytes = new Array[Byte](spianchDataFileHandleLength)
+    val metaBytes = new Array[Byte](oapDataFileHandleLength)
 
-    is.readFully(oapDataFileHandleLengthIndex - spianchDataFileHandleLength, metaBytes)
+    is.readFully(oapDataFileHandleLengthIndex - oapDataFileHandleLength, metaBytes)
 
     val in = new DataInputStream(new ByteArrayInputStream(metaBytes))
 
     val buffer = new Array[Byte](MAGIC.length)
-    in.read(buffer)
+    in.readFully(buffer)
     val magic = UTF8String.fromBytes(buffer).toString
     if (magic != MAGIC) {
       throw new OapException("Not a valid Oap Data File")
@@ -324,9 +321,9 @@ private[oap] class OapDataFileHandle(
     this.fieldCount = in.readInt()
     this.codec = CompressionCodec.findByValue(in.readInt())
 
-    (0 until fieldCount).foreach( _ => columnsMeta.append(ColumnMeta(in)))
+    (0 until fieldCount).foreach(_ => columnsMeta.append(ColumnMeta(in)))
 
-    (0 until groupCount).foreach( _ =>
+    (0 until groupCount).foreach(_ =>
       rowGroupsMeta.append(new RowGroupMeta().read(in, this.fieldCount)))
 
     validateConsistency()

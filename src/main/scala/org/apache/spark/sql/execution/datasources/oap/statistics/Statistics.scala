@@ -17,25 +17,26 @@
 
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
-import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.BaseOrdering
 import org.apache.spark.sql.execution.datasources.oap.Key
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.oap.index._
+import org.apache.spark.sql.execution.datasources.oap.utils.{NonNullKeyReader, NonNullKeyWriter}
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.Platform
 
-abstract class Statistics{
+
+abstract class Statistics(schema: StructType) {
   val id: Int
-  protected var schema: StructType = _
 
-  def initialize(schema: StructType): Unit = {
-    this.schema = schema
-  }
+  @transient
+  protected lazy val nnkw = new NonNullKeyWriter(schema)
+  @transient
+  protected lazy val nnkr: NonNullKeyReader = new NonNullKeyReader(schema)
 
   /**
    * For MinMax & Bloom Filter, every time a key is inserted, then
@@ -50,26 +51,26 @@ abstract class Statistics{
   /**
    * Statistics write function, by default, only a Statistics id should be
    * written into the writer.
-   * @param writer IndexOutputWrite, where to write the infomation
+   * @param writer IndexOutputWrite, where to write the information
    * @param sortedKeys sorted keys stored related to this statistics
    * @return number of bytes written in writer
    */
-  def write(writer: IndexOutputWriter, sortedKeys: ArrayBuffer[Key]): Long = {
+  def write(writer: OutputStream, sortedKeys: ArrayBuffer[Key]): Int = {
     IndexUtils.writeInt(writer, id)
-    4L
+    4
   }
 
   /**
    * Statistics read function, by default, statistics id should be same with
    * current statistics
-   * @param bytes bytes read from file
-   * @param baseOffset start offset to read the statistics
+   * @param fiberCache fiber read from file
+   * @param offset start offset to read the statistics
    * @return number of bytes read from `bytes` array
    */
-  def read(bytes: Array[Byte], baseOffset: Long): Long = {
-    val idFromFile = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + baseOffset)
+  def read(fiberCache: FiberCache, offset: Int): Int = {
+    val idFromFile = fiberCache.getInt(offset)
     assert(idFromFile == id)
-    4L
+    4
   }
 
   /**
@@ -84,63 +85,46 @@ abstract class Statistics{
 
 // tool function for Statistics class
 object Statistics {
-  def getUnsafeRow(schemaLen: Int, array: Array[Byte], offset: Long, size: Int): UnsafeRow = {
-    UnsafeIndexNode.getUnsafeRow(schemaLen, array, Platform.BYTE_ARRAY_OFFSET + offset + 4, size)
-  }
+  // TODO logic is complex, needs to be refactored :(
+  def rowInSingleInterval(
+      row: InternalRow, interval: RangeInterval,
+      startOrder: BaseOrdering, endOrder: BaseOrdering): Boolean = {
+    // Only two cases are accepted, or something is wrong.
+    // 1. row = [1, "aaa"], start = [1, "bbb"] => row.numFields == start.numFields
+    // 2. row = [1, "aaa"], start = [1, DUMMY_KEY_START] => row.numFields -1 = start.numFields
+    assert(interval.start.numFields == row.numFields ||
+      interval.start.numFields == row.numFields - 1,
+      s"Can't compare row with interval.start. row: $row, interval: ${interval.start}")
 
-  /**
-   * This method help oap convert InternalRow type to UnsafeRow type
-   * @param internalRow
-   * @param keyBuf
-   * @return unsafeRow
-   */
-  def convertHelper(converter: UnsafeProjection,
-                    internalRow: InternalRow,
-                    keyBuf: ByteArrayOutputStream): UnsafeRow = {
-    converter.apply(internalRow)
-  }
+    assert(interval.end.numFields == row.numFields ||
+      interval.end.numFields == row.numFields - 1,
+      s"Can't compare row with interval.end. row: $row, interval: ${interval.end}")
 
-  def writeInternalRow(converter: UnsafeProjection,
-                       internalRow: InternalRow,
-                       writer: IndexOutputWriter): Int = {
-    val keyBuf = new ByteArrayOutputStream()
-    val value = convertHelper(converter, internalRow, keyBuf)
-
-    IndexUtils.writeInt(keyBuf, value.getSizeInBytes)
-    value.writeToStream(keyBuf, null)
-    writer.write(keyBuf.toByteArray)
-    keyBuf.close()
-    4 + value.getSizeInBytes
-  }
-
-  // logic is complex, needs to be refactored :(
-  def rowInSingleInterval(row: InternalRow, interval: RangeInterval,
-                          order: BaseOrdering): Boolean = {
-    if (interval.start == IndexScanner.DUMMY_KEY_START) {
-      if (interval.end == IndexScanner.DUMMY_KEY_END) true
-      else {
-        if (order.lt(row, interval.end)) true
-        else if (order.equiv(row, interval.end) && interval.endInclude) true
-        else false
+    val withinStart =
+      if (row.numFields == interval.start.numFields && !interval.startInclude) {
+        startOrder.compare(row, interval.start) > 0
+      } else {
+        startOrder.compare(row, interval.start) >= 0
       }
-    } else {
-      if (order.lt(row, interval.start)) false
-      else if (order.equiv(row, interval.start)) {
-        if (interval.startInclude) {
-          if (interval.end != IndexScanner.DUMMY_KEY_END &&
-            order.equiv(interval.start, interval.end) && !interval.endInclude) {false}
-          else true
-        } else false
+    val withinEnd =
+      if (row.numFields == interval.end.numFields && !interval.endInclude) {
+        endOrder.compare(row, interval.end) < 0
+      } else {
+        endOrder.compare(row, interval.end) <= 0
       }
-      else if (interval.end != IndexScanner.DUMMY_KEY_END && (order.gt(row, interval.end) ||
-        (order.equiv(row, interval.end) && !interval.endInclude))) {false}
-      else true
-    }
+    withinStart && withinEnd
   }
-  def rowInIntervalArray(row: InternalRow, intervalArray: ArrayBuffer[RangeInterval],
-                         order: BaseOrdering): Boolean = {
+
+  def rowInIntervalArray(
+      row: InternalRow, intervalArray: ArrayBuffer[RangeInterval],
+      fullOrder: BaseOrdering, partialOrder: BaseOrdering): Boolean = {
     if (intervalArray == null || intervalArray.isEmpty) false
-    else intervalArray.exists(interval => rowInSingleInterval(row, interval, order))
+    else intervalArray.exists{interval =>
+      val startOrder =
+        if (interval.start.numFields == row.numFields) fullOrder else partialOrder
+      val endOrder =
+        if (interval.end.numFields == row.numFields) fullOrder else partialOrder
+      rowInSingleInterval(row, interval, startOrder, endOrder)}
   }
 }
 

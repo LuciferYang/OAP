@@ -29,15 +29,17 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.oap.{BatchColumn, ColumnValues}
 import org.apache.spark.sql.execution.datasources.oap.filecache._
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.Platform
+import org.apache.spark.util.CompletionIterator
 
 
-private[oap] case class OapDataFile(path: String, schema: StructType) extends DataFile {
+private[oap] case class OapDataFile(path: String, schema: StructType,
+                                    configuration: Configuration) extends DataFile {
 
   private val dictionaries = new Array[Dictionary](schema.length)
+  private val codecFactory = new CodecFactory(configuration)
+  private val meta: OapDataFileHandle = DataFileHandleCacheManager(this)
 
   def getDictionary(fiberId: Int, conf: Configuration): Dictionary = {
-    val meta: OapDataFileHandle = DataFileHandleCacheManager(this, conf)
     val lastGroupMeta = meta.rowGroupsMeta(meta.groupCount - 1)
     val dictDataLens = meta.columnsMeta.map(_.dictionaryDataLength)
 
@@ -61,11 +63,8 @@ private[oap] case class OapDataFile(path: String, schema: StructType) extends Da
     } else dictionaries(fiberId)
   }
 
-  def getFiberData(groupId: Int, fiberId: Int, conf: Configuration): DataFiberCache = {
-    val meta: OapDataFileHandle = DataFileHandleCacheManager(this, conf)
+  def getFiberData(groupId: Int, fiberId: Int, conf: Configuration): FiberCache = {
     val groupMeta = meta.rowGroupsMeta(groupId)
-
-    val codecFactory = new CodecFactory(conf)
     val decompressor: BytesDecompressor = codecFactory.getDecompressor(meta.codec)
 
     // get the fiber data start position
@@ -83,6 +82,7 @@ private[oap] case class OapDataFile(path: String, schema: StructType) extends Da
     val bytes = new Array[Byte](len)
 
     val is = meta.fin
+    // TODO: replace by FSDataInputStream.readFully(position, buffer) which is thread safe
     is.synchronized {
       is.seek(fiberStart)
       is.readFully(bytes)
@@ -101,82 +101,87 @@ private[oap] case class OapDataFile(path: String, schema: StructType) extends Da
       if (groupId == meta.groupCount - 1) meta.rowCountInLastGroup
       else meta.rowCountInEachGroup
 
-    putToFiberCache(fiberParser.parse(decompressor.decompress(bytes, uncompressedLen), rowCount))
+    // We have to read Array[Byte] from file and decode/decompress it before putToFiberCache
+    // TODO: Try to finish this in off-heap memory
+    val data = fiberParser.parse(decompressor.decompress(bytes, uncompressedLen), rowCount)
+    MemoryManager.putToDataFiberCache(data)
   }
 
-  private def putToFiberCache(buf: Array[Byte]): DataFiberCache = {
-    // TODO: make it configurable
-    // TODO: disable compress first since there's some issue to solve with conpression
-    val fiberCacheData = MemoryManager.allocate(buf.length)
-    Platform.copyMemory(buf, Platform.BYTE_ARRAY_OFFSET, fiberCacheData.fiberData.getBaseObject,
-      fiberCacheData.fiberData.getBaseOffset, buf.length)
-    fiberCacheData
+  def closeRowGroup(fiber: Fiber, fiberCache: FiberCache): Unit = {
+    // TODO: Release fiberCache's usage number
   }
 
   // full file scan
+  // TODO: [linhong] two iterator functions are similar. Can we merge them?
   def iterator(conf: Configuration, requiredIds: Array[Int]): Iterator[InternalRow] = {
-    val meta: OapDataFileHandle = DataFileHandleCacheManager(this, conf)
     val row = new BatchColumn()
-    val columns: Array[ColumnValues] = new Array[ColumnValues](requiredIds.length)
-    (0 until meta.groupCount).iterator.flatMap { groupId =>
-      var i = 0
-      while (i < columns.length) {
-        columns(i) = new ColumnValues(
-          meta.rowCountInEachGroup,
-          schema(requiredIds(i)).dataType,
-          FiberCacheManager(DataFiber(this, requiredIds(i), groupId), conf))
-        i += 1
-      }
+    val iterator =
+      (0 until meta.groupCount).iterator.flatMap { groupId =>
+        val fiberCacheGroup = requiredIds.map(id =>
+          FiberCacheManager.get(DataFiber(this, id, groupId), conf))
 
-      if (groupId < meta.groupCount - 1) {
-        // not the last row group
-        row.reset(meta.rowCountInEachGroup, columns).toIterator
-      } else {
-        row.reset(meta.rowCountInLastGroup, columns).toIterator
+        val columns = fiberCacheGroup.zip(requiredIds).map { case (fiberCache, id) =>
+          new ColumnValues(meta.rowCountInEachGroup, schema(id).dataType, fiberCache)
+        }
+
+        val iterator = if (groupId < meta.groupCount - 1) {
+          // not the last row group
+          row.reset(meta.rowCountInEachGroup, columns).toIterator
+        } else {
+          row.reset(meta.rowCountInLastGroup, columns).toIterator
+        }
+        CompletionIterator[InternalRow, Iterator[InternalRow]](iterator,
+          fiberCacheGroup.zip(requiredIds).foreach {
+            case (fiberCache, id) => closeRowGroup(DataFiber(this, id, groupId), fiberCache)
+          }
+        )
       }
-    }
+    CompletionIterator[InternalRow, Iterator[InternalRow]](iterator, close())
   }
 
   // scan by given row ids, and we assume the rowIds are sorted
-  def iterator(conf: Configuration, requiredIds: Array[Int], rowIds: Array[Long])
+  def iterator(conf: Configuration, requiredIds: Array[Int], rowIds: Array[Int])
   : Iterator[InternalRow] = {
-    val meta: OapDataFileHandle = DataFileHandleCacheManager(this, conf)
     val row = new BatchColumn()
-    val columns: Array[ColumnValues] = new Array[ColumnValues](requiredIds.length)
-    var lastGroupId = -1
-    rowIds.indices.iterator.map { idx =>
-      val rowId = rowIds(idx)
-      val groupId = (rowId / meta.rowCountInEachGroup).toInt
-      val rowIdxInGroup = (rowId % meta.rowCountInEachGroup).toInt
+    val groupIds = rowIds.groupBy(rowId => rowId / meta.rowCountInEachGroup)
+    val iterator =
+      groupIds.iterator.flatMap {
+        case (groupId, subRowIds) =>
+          val fiberCacheGroup = requiredIds.map(id =>
+            FiberCacheManager.get(DataFiber(this, id, groupId), conf))
 
-      if (lastGroupId != groupId) {
-        // if we move to another row group, or the first row group
-        var i = 0
-        while (i < columns.length) {
-          columns(i) = new ColumnValues(
-            meta.rowCountInEachGroup,
-            schema(requiredIds(i)).dataType,
-            FiberCacheManager(DataFiber(this, requiredIds(i), groupId), conf))
-          i += 1
-        }
-        if (groupId < meta.groupCount - 1) {
-          // not the last row group
-          row.reset(meta.rowCountInEachGroup, columns)
-        } else {
-          row.reset(meta.rowCountInLastGroup, columns)
-        }
+          val columns = fiberCacheGroup.zip(requiredIds).map { case (fiberCache, id) =>
+            new ColumnValues(meta.rowCountInEachGroup, schema(id).dataType, fiberCache)
+          }
 
-        lastGroupId = groupId
+          if (groupId < meta.groupCount - 1) {
+            // not the last row group
+            row.reset(meta.rowCountInEachGroup, columns)
+          } else {
+            row.reset(meta.rowCountInLastGroup, columns)
+          }
+
+          val iterator =
+            subRowIds.iterator.map(rowId => row.moveToRow(rowId % meta.rowCountInEachGroup))
+
+          CompletionIterator[InternalRow, Iterator[InternalRow]](iterator,
+            fiberCacheGroup.zip(requiredIds).foreach {
+              case (fiberCache, id) => closeRowGroup(DataFiber(this, id, groupId), fiberCache)
+            }
+          )
       }
-
-      row.moveToRow(rowIdxInGroup)
-    }
+    CompletionIterator[InternalRow, Iterator[InternalRow]](iterator, close())
   }
 
-  override def createDataFileHandle(conf: Configuration): OapDataFileHandle = {
+  def close(): Unit = {
+    // We don't close DataFileHandle in order to re-use it from cache.
+    codecFactory.release()
+  }
+
+  override def createDataFileHandle(): OapDataFileHandle = {
     val p = new Path(StringUtils.unEscapeString(path))
 
-    val fs = p.getFileSystem(conf)
+    val fs = p.getFileSystem(configuration)
 
     new OapDataFileHandle().read(fs.open(p), fs.getFileStatus(p).getLen)
   }

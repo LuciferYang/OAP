@@ -38,9 +38,9 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
   // then the Int represents the last matched column indice of the Index entries
   private val availableIndexes = new mutable.ArrayBuffer[(Int, IndexMeta)]()
   private val filterMap = new mutable.HashMap[String, FilterOptimizer]()
-  private var scanner: IndexScanner = _
+  private var scanners: IndexScanners = _
 
-  def getScanner: Option[IndexScanner] = Option(scanner)
+  def getScanners: Option[IndexScanners] = Option(scanners)
 
   /**
    * clear the available indexes and filter info, reset index scanner
@@ -48,10 +48,10 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
   def clear(): Unit = {
     availableIndexes.clear()
     filterMap.clear()
-    scanner = null
+    scanners = null
   }
 
-  def selectAvailableIndex(intervalMap: mutable.HashMap[String, ArrayBuffer[RangeInterval]])
+  private def selectAvailableIndex(intervalMap: mutable.HashMap[String, ArrayBuffer[RangeInterval]])
   : Unit = {
     logDebug("Selecting Available Index:")
     var idx = 0
@@ -100,7 +100,7 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
   }
 
   /**
-   * A simple approach to select best indexer:
+   * A simple approach to select available indexers:
    * For B+ tree index, we expect to make full use of index:
    * On one hand, match as many attributes as possible in a SQL statement;
    * On the other hand, use as many attributes as possible in a B+ tree index
@@ -109,45 +109,111 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
    * and the total number of entries in a B+ tree index candidate
    * we introduce a variable ratio to indicate the match extent
    * ratio = totalAttributes/matchedAttributed + totalIndexEntries/matchedAttributes
-   * @param attrNum: the total number of attributes in the SQL statement
-   * @return (Int, IndexMeta): the best indexMeta,
-   *         and the Int is the index of the last matched attribute in the index entries
+   * @param attrNum       : the total number of attributes in the SQL statement
+   * @param maxChooseSize : the max availabe indexer choose size
+   * @return Seq[(Int, IndexMeta)]: the topN available indexMetas order by ratio,
+   *         actually result size could less than n and the Int is
+   *         the index of the last matched attribute in the index entries
    */
-  def getBestIndexer(attrNum: Int): (Int, IndexMeta) = {
-    var lastIdx = -1
-    var bestIndexer: IndexMeta = null
-    var ratio: Double = 0.0
-    var isFirst = true
-    logDebug("Get Best Index:")
-    for ((idx, indexMeta) <- availableIndexes) {
+  def getAvailableIndexers(
+      attrNum: Int,
+      maxChooseSize: Int = 1): Seq[(Int, IndexMeta)] = {
+    logDebug("Get Available Indexers: maxChooseSize = " + maxChooseSize)
+
+    def takeRatioAndUsedFields(attrNum: Int,
+                               idx: Int,
+                               entryNames: Seq[String]): (Double, Seq[String]) = {
+      val matchedAttr: Double = idx + 1
+      // (ratio, usedFields)
+      (attrNum / matchedAttr + entryNames.length / matchedAttr, entryNames.take(idx + 1))
+    }
+
+    // get names of field used.
+    def takeIndexEntryNames(indexMeta: IndexMeta): Seq[String] = {
       indexMeta.indexType match {
         case BTreeIndex(entries) =>
-          val matchedAttr: Double = idx + 1
-          val currentRatio = attrNum/matchedAttr + entries.length/matchedAttr
-          if (isFirst || ratio > currentRatio) {
-            ratio = currentRatio
-            bestIndexer = indexMeta
-            lastIdx = idx
-            isFirst = false
-          }
-        case _ =>
+          entries.map(entry => meta.schema(entry.ordinal).name)
+        case BitMapIndex(entries) =>
+          entries.map(entry => meta.schema(entry).name)
+        case _ => Seq.empty
       }
     }
-    if (bestIndexer == null && availableIndexes.nonEmpty) {
-      lastIdx = availableIndexes.head._1
-      bestIndexer = availableIndexes.head._2
+
+    // Only leave an indexer (the minimum radio) among a group indexers
+    // holding some of the same attributes.
+    def isUsableIndexer(hasUsedAttrs: mutable.Set[String], attrs: Set[String]): Boolean = {
+      if (hasUsedAttrs.intersect(attrs).isEmpty) {
+        attrs.foreach(hasUsedAttrs.add)
+        true
+      } else false
     }
-    logDebug("\t" + bestIndexer.toString + "; lastIdx: " + lastIdx)
-    (lastIdx, bestIndexer)
+
+    def takeCandidateSet = {
+      availableIndexes
+        // indexer = (idx, IndexMeta)
+        .map(indexer => (indexer, takeIndexEntryNames(indexer._2)))
+        // indexerAndNames = ((idx, IndexMeta), Seq[indexEntryNames])
+        .filter(indexerAndNames => indexerAndNames._2.nonEmpty)
+        .map(indexerAndNames =>
+          (indexerAndNames._1,
+            takeRatioAndUsedFields(attrNum, indexerAndNames._1._1, indexerAndNames._2)))
+        // item = ((idx, IndexMeta), (ratio, Seq[indexEntryNames]))
+        .sortBy(item => item._2._1)
+    }
+
+    // save usedFields for removing duplicate key.
+    val attrs = mutable.Set[String]()
+
+    val result = takeCandidateSet
+      // item = ((idx, IndexMeta), (ratio, Seq[indexEntryNames]))
+      .withFilter(item => isUsableIndexer(attrs, item._2._2.toSet))
+      .map(item => item._1)
+      .take(maxChooseSize)
+
+    if (result != null && result.nonEmpty) {
+      result.foreach(indices =>
+        logDebug("\t" + "Idx: " + indices._1 + "indexMeta: " + indices._2.toString))
+    } else {
+      logDebug("\t" + "No available indexer is found.")
+    }
+
+    result
   }
 
-  def buildScanner(lastIdx: Int, bestIndexer: IndexMeta, intervalMap:
-  mutable.HashMap[String, ArrayBuffer[RangeInterval]]): Unit = {
-    //    intervalArray.sortWith(compare)
-    logDebug("Building Index Scanner with IndexMeta and IntervalMap ...")
+  def buildScanners(
+      intervalMap: mutable.HashMap[String, ArrayBuffer[RangeInterval]],
+      options: Map[String, String] = Map.empty,
+      maxChooseSize: Int = 1): Unit = {
+    selectAvailableIndex(intervalMap)
+    val availableIndexers = getAvailableIndexers(intervalMap.size, maxChooseSize)
 
-    if (lastIdx == -1 && bestIndexer == null) return
+    //    intervalArray.sortWith(compare)
+    logDebug("Building Index Scanners with IndexMeta and IntervalMap ...")
+
+    if (availableIndexers == null || availableIndexers.isEmpty) return
+
+    val availableScanners = availableIndexers.map(availableIndexer =>
+      buildScanner(availableIndexer._1, availableIndexer._2, intervalMap, options))
+      .filter(_ != null)
+
+    if(availableScanners.nonEmpty) {
+      logDebug("Index Scanner Intervals: "
+        + availableScanners.map(_.intervalArray.mkString(", ")).mkString(" | "))
+
+      scanners = new IndexScanners(availableScanners)
+    } else {
+      logDebug("No availableScanners to use")
+    }
+
+  }
+
+  private def buildScanner(lastIdx: Int, bestIndexer: IndexMeta, intervalMap:
+    mutable.HashMap[String, ArrayBuffer[RangeInterval]],
+    options: Map[String, String] = Map.empty): IndexScanner = {
+
+    if (lastIdx == -1 && bestIndexer == null) return null
     var keySchema: StructType = null
+    var scanner: IndexScanner = null
     bestIndexer.indexType match {
       case BTreeIndex(entries) if entries.length == 1 =>
         keySchema = new StructType().add(meta.schema(entries(lastIdx).ordinal))
@@ -183,17 +249,33 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
 
         } // end for
       case BitMapIndex(entries) =>
-        keySchema = new StructType().add(meta.schema(entries(lastIdx)))
-        scanner = BitMapScanner(bestIndexer)
         val attribute = meta.schema(entries(lastIdx)).name
         val filterOptimizer = unapply(attribute).get
-        scanner.intervalArray =
+        val sortedIntervalArray =
           intervalMap(attribute).sortWith(filterOptimizer.compareRangeInterval)
+        val singleValueIntervalArray =
+          sortedIntervalArray.filter(filterOptimizer.isSingleValueInterval)
+        // Make sure that each interval is really equal query.
+        singleValueIntervalArray.foreach(interval => {
+          assert(interval.start == interval.end)
+        })
+        if (singleValueIntervalArray.nonEmpty) {
+          keySchema = new StructType().add(meta.schema(entries(lastIdx)))
+          scanner = BitMapScanner(bestIndexer)
+          logDebug("Bitmap index only supports equal query.")
+          scanner.intervalArray = singleValueIntervalArray
+        }
       case _ =>
     }
 
-    logDebug("Index Scanner Intervals: " + scanner.intervalArray.mkString(", "))
-    scanner.withKeySchema(keySchema)
+    if (scanner != null && keySchema != null) {
+      logDebug("Index Scanner Intervals: " + scanner.intervalArray.mkString(", "))
+      scanner.withKeySchema(keySchema)
+
+      scanner.internalLimit_=(
+        options.getOrElse(OapFileFormat.OAP_INDEX_SCAN_NUM_OPTION_KEY, "0").toInt)
+    }
+    scanner
   }
 
   def unapply(attribute: String): Option[FilterOptimizer] = {
@@ -207,10 +289,12 @@ private[oap] class IndexContext(meta: DataSourceMeta) extends Logging {
   def unapply(value: Any): Option[Key] =
     Some(InternalRow(CatalystTypeConverters.convertToCatalyst(value)))
 
+  def unapply(values: Array[Any]): Option[Array[Key]] =
+    Some(values.map(value => InternalRow(CatalystTypeConverters.convertToCatalyst(value))))
 }
 
 private[oap] object DummyIndexContext extends IndexContext(null) {
-  override def getScanner: Option[IndexScanner] = None
+  override def getScanners: Option[IndexScanners] = None
   override def unapply(attribute: String): Option[FilterOptimizer] = None
   override def unapply(value: Any): Option[Key] = None
 }
@@ -218,8 +302,16 @@ private[oap] object DummyIndexContext extends IndexContext(null) {
 private[oap] class FilterOptimizer(keySchema: StructType) {
   val order = GenerateOrdering.create(keySchema)
 
-  // compare two intervals
+  def isSingleValueInterval(interval: RangeInterval): Boolean =
+    interval.start == interval.end && interval.startInclude && interval.endInclude
+
+  // compare two intervals: return true if interval1.start < interval2.start
+  // isNullPredicate is assumed to be "smallest"
   def compareRangeInterval(interval1: RangeInterval, interval2: RangeInterval): Boolean = {
+    if (interval1.isNullPredicate || interval2.isNullPredicate) {
+      if (interval1.isNullPredicate) return true
+      else return false
+    }
     if ((interval1.start eq IndexScanner.DUMMY_KEY_START) &&
       (interval2.start ne IndexScanner.DUMMY_KEY_START)) {
       return true
@@ -230,7 +322,8 @@ private[oap] class FilterOptimizer(keySchema: StructType) {
     order.compare(interval1.start, interval2.start) < 0
   }
   // unite interval extra to interval base
-  // return: if two intervals is unioned
+  // return: true if two intervals are unioned together
+  //         false if these two intervals cannot be unioned, since they do not overlap
   def intervalUnion(base: RangeInterval, extra: RangeInterval): Boolean = {
     def union: Boolean = {// union two intervals
       if ((extra.end eq IndexScanner.DUMMY_KEY_END) || order.compare(extra.end, base.end)>0) {
@@ -244,9 +337,17 @@ private[oap] class FilterOptimizer(keySchema: StructType) {
       true
     }// end def union
 
+    // isNull U isNull => isNull
+    if (base.isNullPredicate && extra.isNullPredicate) return true
+    // isNull U otherFilterPredicate => isNull U otherFilterPredicate
+    if (base.isNullPredicate ^ extra.isNullPredicate) return false
+
     if (base.start eq IndexScanner.DUMMY_KEY_START) {
       if (base.end eq IndexScanner.DUMMY_KEY_END) {
-        return true
+        // base is isNotNullPredicate
+        // isNotNull U isNull => isNotNull U isNull
+        if (extra.isNullPredicate) return false
+        else return true // isNotNull U otherFilterPredicate => isNotNull
       }
       if (extra.start ne IndexScanner.DUMMY_KEY_START) {
         val cmp = order.compare(extra.start, base.end)
@@ -272,7 +373,7 @@ private[oap] class FilterOptimizer(keySchema: StructType) {
       union
     }
   }
-  // Or operation: (union multiple range intervals which may overlap)
+  // "Or" operation: (union multiple range intervals which may overlap)
   def addBound(intervalArray1: ArrayBuffer[RangeInterval],
                intervalArray2: ArrayBuffer[RangeInterval] ): ArrayBuffer[RangeInterval] = {
     // firstly, put all intervals to intervalArray1
@@ -281,15 +382,21 @@ private[oap] class FilterOptimizer(keySchema: StructType) {
       return intervalArray1
     }
 
+    // sort the array of interval according to the interval's start key
+    // After sorted, isNullPredicate(if have) will be put at the front of the array
     val sortedArray = intervalArray1.sortWith(compareRangeInterval)
 
     val result = ArrayBuffer(sortedArray.head)
     for(i <- 1 until sortedArray.length) {
       val interval = result.last
-      if ((interval.end eq IndexScanner.DUMMY_KEY_END) && interval.startInclude) {
+      // attr >= value, so it is unnecessary to do subsequent union, just return the result
+      if (!interval.isNullPredicate &&
+        (interval.end eq IndexScanner.DUMMY_KEY_END) && interval.startInclude) {
         return result
       }
       if(!intervalUnion(interval, sortedArray(i))) {
+        // these two intervals do not overlap, thus cannot be unioned,
+        // just add the second interval to the result list
         result += sortedArray(i)
       }
 
@@ -336,26 +443,36 @@ private[oap] class FilterOptimizer(keySchema: StructType) {
     true
   }
 
-  // And operation: (intersect multiple range intervals)
+  // "And" operation: (intersect multiple range intervals)
   def mergeBound(intervalArray1: ArrayBuffer[RangeInterval],
                  intervalArray2: ArrayBuffer[RangeInterval] ): ArrayBuffer[RangeInterval] = {
     val intervalArray = for {
       interval1 <- intervalArray1
       interval2 <- intervalArray2
+      // isNull & otherPredicate => empty
+      if !(interval1.isNullPredicate ^ interval2.isNullPredicate)
     } yield {
-      val interval = new RangeInterval(
-        IndexScanner.DUMMY_KEY_START, IndexScanner.DUMMY_KEY_END, true, true)
+      // isNull & isNull => isNull
+      if (interval1.isNullPredicate && interval2.isNullPredicate) interval1
+      else {
+        // this condition contains isNotNull & normalInterval => normalInterval
+        val interval = RangeInterval(
+          IndexScanner.DUMMY_KEY_START,
+          IndexScanner.DUMMY_KEY_END,
+          includeStart = true,
+          includeEnd = true)
 
-      val re1 = intersect(interval1.start, interval2.start,
-        interval1.startInclude, interval2.startInclude, false)
-      interval.start = re1._1
-      interval.startInclude = re1._2
+        val re1 = intersect(interval1.start, interval2.start,
+          interval1.startInclude, interval2.startInclude, isEndKey = false)
+        interval.start = re1._1
+        interval.startInclude = re1._2
 
-      val re2 = intersect(interval1.end, interval2.end,
-        interval1.endInclude, interval2.endInclude, true)
-      interval.end = re2._1
-      interval.endInclude = re2._2
-      interval
+        val re2 = intersect(interval1.end, interval2.end,
+          interval1.endInclude, interval2.endInclude, isEndKey = true)
+        interval.end = re2._1
+        interval.endInclude = re2._2
+        interval
+      }
     }
     // retain non-empty intervals
     intervalArray.filter(validate)

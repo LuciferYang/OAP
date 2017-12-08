@@ -17,45 +17,40 @@
 
 package org.apache.spark.sql.execution.datasources.oap.statistics
 
+import java.io.OutputStream
+
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateOrdering
 import org.apache.spark.sql.execution.datasources.oap.Key
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.oap.index._
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.Platform
 
-private[oap] class BloomFilterStatistics extends Statistics {
+private[oap] class BloomFilterStatistics(schema: StructType) extends Statistics(schema) {
   override val id: Int = BloomFilterStatisticsType.id
 
-  protected var bfIndex: BloomFilter = _
+  protected var bfIndex: BloomFilter = new BloomFilter(bfMaxBits, bfHashFuncs)()
 
   private lazy val bfMaxBits: Int = StatisticsManager.bloomFilterMaxBits
   private lazy val bfHashFuncs: Int = StatisticsManager.bloomFilterHashFuncs
 
-  @transient private var projectors: Array[UnsafeProjection] = _ // for write
-  @transient private lazy val convertor: UnsafeProjection = UnsafeProjection.create(schema)
-  @transient private lazy val ordering = GenerateOrdering.create(schema)
-
-  override def initialize(schema: StructType): Unit = {
-    super.initialize(schema)
-    bfIndex = new BloomFilter(bfMaxBits, bfHashFuncs)()
-    val boundReference = schema.zipWithIndex.map(x =>
-      BoundReference(x._2, x._1.dataType, nullable = true))
-    // for multi-column index, add all subsets into bloom filter
-    // For example, a column with a = 1, b = 2, a and b are index columns
-    // then three records: a = 1, b = 2, a = 1 b = 2, are inserted to bf
-    projectors = boundReference.toSet.subsets().filter(_.nonEmpty).map(s =>
-      UnsafeProjection.create(s.toArray)).toArray
-  }
+  @transient
+  private lazy val projectors: Array[UnsafeProjection] = schema.zipWithIndex.map(x =>
+    BoundReference(x._2, x._1.dataType, nullable = true)).toSet.subsets().filter(
+    _.nonEmpty).map(s => UnsafeProjection.create(s.toArray)).toArray
+  @transient
+  private lazy val converter: UnsafeProjection = UnsafeProjection.create(schema)
+  @transient
+  private lazy val ordering = GenerateOrdering.create(schema)
 
   override def addOapKey(key: Key): Unit = {
     assert(bfIndex != null, "Please initialize the statistics")
     projectors.foreach(p => bfIndex.addValue(p(key).getBytes))
   }
 
-  override def write(writer: IndexOutputWriter, sortedKeys: ArrayBuffer[Key]): Long = {
+  override def write(writer: OutputStream, sortedKeys: ArrayBuffer[Key]): Int = {
     var offset = super.write(writer, sortedKeys)
 
     // Bloom filter index file format:
@@ -79,47 +74,58 @@ private[oap] class BloomFilterStatistics extends Statistics {
     offset
   }
 
-  override def read(bytes: Array[Byte], baseOffset: Long): Long = {
-    var offset = super.read(bytes, baseOffset) + baseOffset
-    offset += readBloomFilter(bytes, offset)
-    offset - baseOffset
+  override def read(fiberCache: FiberCache, offset: Int): Int = {
+    var readOffset = super.read(fiberCache, offset) + offset
+    readOffset += readBloomFilter(fiberCache, readOffset)
+    readOffset - offset
   }
 
-  private def readBloomFilter(bytes: Array[Byte], baseOffset: Long): Long = {
-    var offset = baseOffset
-    val bitLength = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-    val numHashFunc = Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + offset + 4)
-    offset += 8
+  private def readBloomFilter(fiberCache: FiberCache, offset: Int): Int = {
+    var readOffset = offset
+
+    val bitLength = fiberCache.getInt(readOffset)
+    val numHashFunc = fiberCache.getInt(readOffset + 4)
+    readOffset += 8
 
     val bitSet = new Array[Long](bitLength)
 
     for (i <- 0 until bitLength) {
-      bitSet(i) = Platform.getLong(bytes, Platform.BYTE_ARRAY_OFFSET + offset)
-      offset += 8
+      bitSet(i) = fiberCache.getLong(readOffset)
+      readOffset += 8
     }
 
     bfIndex = BloomFilter(bitSet, numHashFunc)
-    offset - baseOffset
+    readOffset - offset
   }
 
   override def analyse(intervalArray: ArrayBuffer[RangeInterval]): Double = {
-    // extract equal condition from intervalArray
-    val equalValues: Array[Key] =
-      if (intervalArray.nonEmpty) {
-        // should not use ordering.compare here
-        intervalArray.filter(interval =>
-          interval.start != IndexScanner.DUMMY_KEY_START
-            && interval.end != IndexScanner.DUMMY_KEY_END
-        ).filter(interval => ordering.compare(interval.start, interval.end) == 0
-          && interval.startInclude && interval.endInclude).map(_.start).toArray
-      } else null
-    val skipFlag = if (equalValues != null && equalValues.length > 0) {
-      !equalValues.map(value => bfIndex
-        .checkExist(convertor(value).getBytes))
-        .reduceOption(_ || _).getOrElse(false)
-    } else false
 
-    if (skipFlag) StaticsAnalysisResult.SKIP_INDEX
+    val partialSchema = StructType(schema.dropRight(1))
+    val partialConverter = UnsafeProjection.create(partialSchema)
+    /**
+     * When to skip Index? If any interval in intervalArray satisfies any of below:
+     * 1. schema.length > 1 means a multiple column index. First (schema.length-1) fields are same.
+     *    1.1 interval.start == interval.end (numFields == schema.length) and NOT exist in bfIndex
+     *    1.2 interval.start != interval.end (not equal or DUMMY_KEY) and first
+     *        (schema.length - 1) fields NOT exist in bfIndex.
+     * 2. schema.length = 1 means single column index. First (schema.length-1) fields are empty.
+     *    2.1 interval.start == interval.end (numFields == schema.length) and NOT exist in bfIndex
+     *    2.2 interval.start != interval.end (not equal or DUMMY_KEY). Just return false
+     */
+    val skipIndex = intervalArray.exists { interval =>
+      val numFields = math.min(interval.start.numFields, interval.end.numFields)
+      if (schema.length > 1) {
+        if (numFields == schema.length && ordering.compare(interval.start, interval.end) == 0) {
+            !bfIndex.checkExist(converter(interval.start).getBytes)
+        } else !bfIndex.checkExist(partialConverter(interval.start).getBytes)
+      } else {
+        if (numFields == 1 && ordering.compare(interval.start, interval.end) == 0) {
+          !bfIndex.checkExist(converter(interval.start).getBytes)
+        } else false
+      }
+    }
+
+    if (skipIndex) StaticsAnalysisResult.SKIP_INDEX
     else StaticsAnalysisResult.USE_INDEX
   }
 }

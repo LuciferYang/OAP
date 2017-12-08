@@ -20,17 +20,15 @@ package org.apache.spark.sql.execution.datasources.oap
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.util.{ArrayData, MapData}
-import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberCache
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.types._
-import org.apache.spark.unsafe.Platform
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 import org.apache.spark.util.collection.BitSet
 
 
-class ColumnValues(defaultSize: Int, dataType: DataType, val raw: DataFiberCache) {
+class ColumnValues(defaultSize: Int, dataType: DataType, val buffer: FiberCache) {
   require(dataType.isInstanceOf[AtomicType], "Only atomic type accepted for now.")
 
-  private val baseObject = raw.fiberData.getBaseObject
   // for any FiberData, the first defaultSize / 8 will be the bitmask
   // TODO what if defaultSize / 8 is not an integer?
 
@@ -38,13 +36,12 @@ class ColumnValues(defaultSize: Int, dataType: DataType, val raw: DataFiberCache
   val bitset: BitSet = {
     val bs = new BitSet(defaultSize)
     val longs = bs.toLongArray()
-    Platform.copyMemory(baseObject, raw.fiberData.getBaseOffset,
-      longs, Platform.LONG_ARRAY_OFFSET, longs.length * 8)
+    buffer.copyMemoryToLongs(0, longs)
+
     bs
   }
 
-  // TODO should be in FiberByteData
-  private val baseOffset = raw.fiberData.getBaseOffset + bitset.toLongArray().length * 8
+  private val dataOffset = bitset.toLongArray().length * 8
 
   def isNullAt(idx: Int): Boolean = !bitset.get(idx)
 
@@ -65,35 +62,35 @@ class ColumnValues(defaultSize: Int, dataType: DataType, val raw: DataFiberCache
     case _: MapType => throw new NotImplementedError(s"Map")
     case _: StructType => throw new NotImplementedError(s"Struct")
     case TimestampType => throw new NotImplementedError(s"Timestamp")
-    case other => throw new NotImplementedError(s"other")
+    case other => throw new NotImplementedError(s"$other")
   }
 
   private def getAs[T](idx: Int): T = genericGet(idx).asInstanceOf[T]
   def get(idx: Int): AnyRef = getAs(idx)
 
   def getBooleanValue(idx: Int): Boolean = {
-    Platform.getBoolean(baseObject, baseOffset + idx * BooleanType.defaultSize)
+    buffer.getBoolean(dataOffset + idx * BooleanType.defaultSize)
   }
   def getByteValue(idx: Int): Byte = {
-    Platform.getByte(baseObject, baseOffset + idx * ByteType.defaultSize)
+    buffer.getByte(dataOffset + idx * ByteType.defaultSize)
   }
   def getDateValue(idx: Int): Int = {
-    Platform.getInt(baseObject, baseOffset + idx * IntegerType.defaultSize)
+    buffer.getInt(dataOffset + idx * IntegerType.defaultSize)
   }
   def getDoubleValue(idx: Int): Double = {
-    Platform.getDouble(baseObject, baseOffset + idx * DoubleType.defaultSize)
+    buffer.getDouble(dataOffset + idx * DoubleType.defaultSize)
   }
   def getIntValue(idx: Int): Int = {
-    Platform.getInt(baseObject, baseOffset + idx * IntegerType.defaultSize)
+    buffer.getInt(dataOffset + idx * IntegerType.defaultSize)
   }
   def getLongValue(idx: Int): Long = {
-    Platform.getLong(baseObject, baseOffset + idx * LongType.defaultSize)
+    buffer.getLong(dataOffset + idx * LongType.defaultSize)
   }
   def getShortValue(idx: Int): Short = {
-    Platform.getShort(baseObject, baseOffset + idx * ShortType.defaultSize)
+    buffer.getShort(dataOffset + idx * ShortType.defaultSize)
   }
   def getFloatValue(idx: Int): Float = {
-    Platform.getFloat(baseObject, baseOffset + idx * FloatType.defaultSize)
+    buffer.getFloat(dataOffset + idx * FloatType.defaultSize)
   }
 
   def getStringValue(idx: Int): UTF8String = {
@@ -112,7 +109,8 @@ class ColumnValues(defaultSize: Int, dataType: DataType, val raw: DataFiberCache
     //    value #N
     val length = getIntValue(idx * 2)
     val offset = getIntValue(idx * 2 + 1)
-    UTF8String.fromAddress(baseObject, raw.fiberData.getBaseOffset + offset, length)
+
+    buffer.getUTF8String(offset, length)
   }
 
   def getBinaryValue(idx: Int): Array[Byte] = {
@@ -132,8 +130,7 @@ class ColumnValues(defaultSize: Int, dataType: DataType, val raw: DataFiberCache
     val length = getIntValue(idx * 2)
     val offset = getIntValue(idx * 2 + 1)
     val result = new Array[Byte](length)
-    Platform.copyMemory(baseObject, raw.fiberData.getBaseOffset + offset, result,
-      Platform.BYTE_ARRAY_OFFSET, length)
+    buffer.copyMemoryToBytes(offset, result)
 
     result
   }
@@ -168,6 +165,12 @@ class BatchColumn {
   object internalRow extends InternalRow {
     override def numFields: Int = values.length
 
+    override def setNullAt(i: Int): Unit =
+      throw new NotImplementedError("")
+
+    override def update(i: Int, value: Any): Unit =
+      throw new NotImplementedError("")
+
     override def copy(): InternalRow = {
       val row = new Array[Any](values.length)
       var i = 0
@@ -178,14 +181,7 @@ class BatchColumn {
       new GenericInternalRow(row)
     }
 
-    override def anyNull: Boolean = {
-      var i = 0
-      while (i < values.length) {
-        if (values(i).isNullAt(currentIndex)) return true
-        i += 1
-      }
-      return false
-    }
+    override def anyNull: Boolean = values.exists(_.isNullAt(currentIndex))
 
     override def getUTF8String(ordinal: Int): UTF8String =
       values(ordinal).getStringValue(currentIndex)

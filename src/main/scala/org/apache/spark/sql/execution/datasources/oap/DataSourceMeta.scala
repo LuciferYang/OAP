@@ -21,15 +21,12 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 
 import scala.collection.mutable.{ArrayBuffer, BitSet}
-import scala.collection.mutable
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs._
-
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.datasources.oap.io.OapDataFile
 import org.apache.spark.sql.types._
-
 
 /**
  * The Oap meta file is organized in the following format.
@@ -42,12 +39,10 @@ import org.apache.spark.sql.types._
  *    .
  *    .
  * FileMeta N
- * IndexMeta 1      -- 768 bytes
+ * IndexMeta 1      -- 512 bytes
  *     Name         -- 255 bytes -- The index name.
  *     indexType    --   1 bytes -- The index type. Sort(0)/ Bitmap Mask(1).
  *     keyOrdinal   -- 256 bytes -- The bit mask for the index key. Maximum support 256 fields
- *     keySortDir   -- 256 bytes -- The bit mask for the key's sort direction. This is only used by
- *                                  BTreeIndex. The bit is set if the sort direction is Descending.
  * IndexMeta 2
  *    .
  *    .
@@ -63,16 +58,72 @@ import org.apache.spark.sql.types._
  *
  */
 
-private[oap] trait IndexType
+trait IndexType {
+
+  // Bit is set if index is sorted index. hash-based index unset this.
+  // Once this bit is on, indexOrder should be called to check direction.
+  final val INDEX_METRICS_KEY_ORDER_BIT_MASK = 0
+
+  // Bit is set if index is scanned in group.
+  // One special case is index is built in group, but scan is out of order
+  // like below bitmap to let the items can be scanned in row sequence.
+  // RowId: | 0 1 2 3 4 |
+  //        +-----------+
+  // Key-1  | x       x |
+  // Key-2  |     x     |
+  //        +-----------+
+  // The scan row id sequence can be 0 2 4 instead of 0 4 2.
+  final val INDEX_METRICS_KEY_GROUP_BIT_MASK = 1
+
+  // if key value is needed.
+  // sometimes a range based index may not store all keys in index.
+  // TODO: index scan does not return key, enable in future.
+  final val INDEX_METRICS_KEY_ITERABLE_BIT_MASK = 2
+
+  // if support fast existence check.
+  final val INDEX_METRICS_KEY_EXISTENCE_BIT_MASK = 4
+
+  // A metrics BitSet
+  //    0 1 2 3 4 5 6 7
+  //    X X X X RESERVED
+  //    | | | |
+  //    | | | +> INDEX_METRICS_KEY_EXISTENCE_BIT_MASK.
+  //    | | +> INDEX_METRICS_KEY_ITERABLE_BIT_MASK.
+  //    | +> INDEX_METRICS_KEY_GROUP_BIT_MASK.
+  //    +> INDEX_METRICS_KEY_ORDER_BIT_MASK.
+  def metrics: BitSet = BitSet.fromBitMask(Array(0))
+
+  // Get index sort direction if INDEX_METRICS_KEY_ORDER is true.
+  def indexOrder: Seq[SortDirection] = Nil
+
+  // Check if this index matches the required index metrics.
+  def satisfy(requirements: Option[IndexType]): Boolean = requirements match {
+    case Some(r) => metrics.equals(r.metrics)
+    case _ => true // No requirements.
+  }
+}
 
 private[oap] case class BTreeIndexEntry(ordinal: Int, dir: SortDirection = Ascending) {
   override def toString: String = ordinal + " " + (if (dir == Ascending) "ASC" else "DESC")
 }
 
 private[oap] case class BTreeIndex(entries: Seq[BTreeIndexEntry] = Nil) extends IndexType {
-  def appendEntry(entry: BTreeIndexEntry): BTreeIndex = BTreeIndex(entries :+ entry)
+  def appendEntry(entry: BTreeIndexEntry): BTreeIndex = {
+    BTreeIndex(entries :+ entry)
+  }
 
   override def toString: String = "COLUMN(" + entries.mkString(", ") + ") BTREE"
+
+  override def indexOrder: Seq[SortDirection] = {
+    if (entries.nonEmpty) {
+      entries.map(_.dir)
+    } else {
+      Nil
+    }
+  }
+
+  override def metrics: BitSet =
+    BitSet.fromBitMask(Array(INDEX_METRICS_KEY_ORDER_BIT_MASK | INDEX_METRICS_KEY_GROUP_BIT_MASK))
 }
 
 private[oap] case class BitMapIndex(entries: Seq[Int] = Nil) extends IndexType {
@@ -170,21 +221,18 @@ private[oap] class IndexMeta(
     writeString(name, INDEX_META_NAME_LENGTH, out)
     writeString(time, INDEX_META_TIME_LENGTH, out)
     val keyBits = BitSet.empty
-    val dirBits = BitSet.empty
     indexType match {
       case BTreeIndex(entries) =>
         out.writeByte(BTREE_INDEX_TYPE)
-        writeBTreeIndexEntries(entries, INDEX_META_KEY_LENGTH * 2, out)
+        writeBTreeIndexEntries(entries, INDEX_META_KEY_LENGTH, out)
       case BitMapIndex(entries) =>
         out.writeByte(BITMAP_INDEX_TYPE)
         entries.foreach(keyBits += _)
         writeBitSet(keyBits, INDEX_META_KEY_LENGTH, out)
-        writeBitSet(dirBits, INDEX_META_KEY_LENGTH, out)
       case HashIndex(entries) =>
         out.writeByte(HASH_INDEX_TYPE)
         entries.foreach(keyBits += _)
         writeBitSet(keyBits, INDEX_META_KEY_LENGTH, out)
-        writeBitSet(dirBits, INDEX_META_KEY_LENGTH, out)
     }
   }
 
@@ -226,7 +274,7 @@ private[oap] object IndexMeta {
   final val BITMAP_INDEX_TYPE = 1
   final val HASH_INDEX_TYPE = 2
 
-  def apply() : IndexMeta = new IndexMeta()
+  def apply(): IndexMeta = new IndexMeta()
   def apply(name: String, time: String, indexType: IndexType): IndexMeta = {
     val indexMeta = new IndexMeta()
     indexMeta.name = name
@@ -290,45 +338,60 @@ private[oap] case class DataSourceMeta(
     dataReaderClassName: String,
     @transient fileHeader: FileHeader) extends Serializable {
 
-   def isSupportedByIndex(exp: Expression,
-                          hashSetList: mutable.ListBuffer[mutable.HashSet[String]]): Boolean = {
-     val bTreeSet: mutable.HashSet[String] = hashSetList(0)
-     val bitmapSet: mutable.HashSet[String] = hashSetList(1)
-     var attr: String = null
-     def checkAttribute(filter: Expression): Boolean = filter match {
-       case Or(left, right) =>
-         checkAttribute(left) && checkAttribute(right)
-       case And(left, right) =>
-         checkAttribute(left) && checkAttribute(right)
-       case EqualTo(attrRef: AttributeReference, _) =>
-         if (attr ==  null || attr == attrRef.name) {
-           attr = attrRef.name
-           bTreeSet.contains(attr) || bitmapSet.contains(attr)
-         } else false
-       case LessThan(attrRef: AttributeReference, _) =>
-         if (attr ==  null || attr == attrRef.name) {
-           attr = attrRef.name
-           bTreeSet.contains(attr) || bitmapSet.contains(attr)
-         } else false
-       case LessThanOrEqual(attrRef: AttributeReference, _) =>
-         if (attr ==  null || attr == attrRef.name) {
-           attr = attrRef.name
-           bTreeSet.contains(attr) || bitmapSet.contains(attr)
-         } else false
-       case GreaterThan(attrRef: AttributeReference, _) =>
-         if (attr ==  null || attr == attrRef.name) {
-           attr = attrRef.name
-           bTreeSet.contains(attr) || bitmapSet.contains(attr)
-         } else false
-       case GreaterThanOrEqual(attrRef: AttributeReference, _) =>
-         if (attr ==  null || attr == attrRef.name) {
-           attr = attrRef.name
-           bTreeSet.contains(attr) || bitmapSet.contains(attr)
-         } else false
-       case _ => false
-     }
+    // Check whether this expression is supported by index or not
+    def isSupportedByIndex(exp: Expression, requirement: Option[IndexType] = None): Boolean = {
+    var attr: String = null
+    def checkInMetaSet(attrRef: AttributeReference): Boolean = {
+      if (attr ==  null || attr == attrRef.name) {
+        attr = attrRef.name
+        indexMetas.exists{
+          _.indexType match {
+            case index @ BTreeIndex(entries) =>
+              schema(entries.head.ordinal).name == attr && index.satisfy(requirement)
+            case index @ BitMapIndex(entries) =>
+              entries.map(ordinal =>
+                schema(ordinal).name).contains(attr) && index.satisfy(requirement)
+            case _ => false
+          }
+        }
+      } else false
+    }
 
-     checkAttribute(exp)
+    def checkAttribute(filter: Expression): Boolean = filter match {
+      case Or(left, right) =>
+        checkAttribute(left) && checkAttribute(right)
+      case And(left, right) =>
+        checkAttribute(left) && checkAttribute(right)
+      case EqualTo(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case EqualTo(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case LessThan(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case LessThan(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case LessThanOrEqual(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case LessThanOrEqual(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case GreaterThan(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case GreaterThan(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case GreaterThanOrEqual(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case GreaterThanOrEqual(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case In(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case IsNotNull(attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case IsNull(attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case _ => false
+    }
+
+    checkAttribute(exp)
   }
 }
 
@@ -386,7 +449,7 @@ private[oap] object DataSourceMeta {
   final val FILE_META_FINGERPRINT_LENGTH = 248
   final val FILE_META_DATA_FILE_NAME_LENGTH = 256
 
-  final val INDEX_META_LENGTH = 768
+  final val INDEX_META_LENGTH = 512
   final val INDEX_META_NAME_LENGTH = 240
   final val INDEX_META_TIME_LENGTH = 15
   final val INDEX_META_TYPE_LENGTH = 1
@@ -429,7 +492,7 @@ private[oap] object DataSourceMeta {
     indexMetas
   }
 
-  private def readSchema(fileHeader: FileHeader, in: FSDataInputStream) : StructType = {
+  private def readSchema(fileHeader: FileHeader, in: FSDataInputStream): StructType = {
     in.seek(FILE_META_START_OFFSET + FILE_META_LENGTH * fileHeader.dataFileCount +
       INDEX_META_LENGTH * fileHeader.indexCount)
     StructType.fromString(in.readUTF())
@@ -498,7 +561,7 @@ private[oap] object DataSourceMeta {
     }
   }
 
-  def newBuilder() : DataSourceMetaBuilder = {
+  def newBuilder(): DataSourceMetaBuilder = {
     new DataSourceMetaBuilder
   }
 }

@@ -17,25 +17,13 @@
 
 package org.apache.spark.sql.execution.datasources.oap.index
 
-import org.apache.hadoop.mapreduce.Job
+import org.apache.hadoop.mapreduce.{RecordWriter, TaskAttemptContext}
 
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.catalyst.InternalRow
 
-private[index] object IndexWriterFactory {
-  def getIndexWriter(
-      relation: WriteIndexRelation,
-      job: Job,
-      indexColumns: Array[IndexColumn],
-      keySchema: StructType,
-      indexName: String,
-      time: String,
-      indexType: AnyIndexType,
-      isAppend: Boolean): IndexWriter = {
-    indexType match {
-      case BTreeIndexType =>
-        new BTreeIndexWriter(relation, job, indexColumns, keySchema, indexName, time, isAppend)
-      case BitMapIndexType =>
-        new BitMapIndexWriter(relation, job, indexColumns, keySchema, indexName, time, isAppend)
-    }
-  }
+private[index] class DummyIndexRecordWriter() extends RecordWriter[Void, InternalRow] {
+
+  override def write(key: Void, value: InternalRow): Unit = {}
+
+  override def close(context: TaskAttemptContext): Unit = {}
 }

@@ -17,17 +17,17 @@
 
 package org.apache.spark.sql.execution.datasources.oap.index
 
+import sun.nio.ch.DirectBuffer
+
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.execution.datasources.oap._
-import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberCache
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.Platform
-
+import org.apache.spark.util.io.ChunkedByteBuffer
 
 private[oap] object CurrentKey {
   val INVALID_KEY_INDEX = -1
 }
-
 
 // B+ tree values in the leaf node, in long term, a single value should be associated
 // with a single key, however, in order to eliminate the duplicated key in the B+ tree,
@@ -49,15 +49,21 @@ private[oap] trait IndexNode {
 }
 
 trait UnsafeIndexTree {
-  def buffer: DataFiberCache
+  def buffer: ChunkedByteBuffer
   def offset: Long
-  def baseObj: Object = buffer.fiberData.getBaseObject
-  def baseOffset: Long = buffer.fiberData.getBaseOffset
+  def baseObj: Object = buffer.chunks.head match {
+    case _: DirectBuffer => null
+    case _ => buffer.toArray
+  }
+  def baseOffset: Long = buffer.chunks.head match {
+    case buf: DirectBuffer => buf.address()
+    case _ => Platform.BYTE_ARRAY_OFFSET
+  }
   def length: Int = Platform.getInt(baseObj, baseOffset + offset)
 }
 
 private[oap] case class UnsafeIndexNodeValue(
-    buffer: DataFiberCache,
+    buffer: ChunkedByteBuffer,
     offset: Long,
     dataEnd: Long) extends IndexNodeValue with UnsafeIndexTree {
   // 4 <- value1, 8 <- value2
@@ -69,7 +75,7 @@ private[oap] case class UnsafeIndexNodeValue(
 }
 
 private[oap] case class UnsafeIndexNode(
-    buffer: DataFiberCache,
+    buffer: ChunkedByteBuffer,
     offset: Long,
     dataEnd: Long,
     schema: StructType) extends IndexNode with UnsafeIndexTree {
@@ -140,7 +146,7 @@ private[oap] object UnsafeIndexNode {
   }
 }
 
-private[oap] class CurrentKey(node: IndexNode, keyIdx: Int, valueIdx: Int) {
+private[oap] class CurrentKey(node: IndexNode, keyIdx: Int, valueIdx: Int, indexLimit: Int = 0) {
   assert(node.isLeaf, "Should be Leaf Node")
 
   private var currentNode: IndexNode = node
@@ -150,6 +156,10 @@ private[oap] class CurrentKey(node: IndexNode, keyIdx: Int, valueIdx: Int) {
   } else {
     CurrentKey.INVALID_KEY_INDEX
   }
+
+  private val limitScanNum: Int = indexLimit
+
+  private var currentScanNum: Int = 1
 
   private var currentValueIdx: Int = valueIdx
 
@@ -168,14 +178,19 @@ private[oap] class CurrentKey(node: IndexNode, keyIdx: Int, valueIdx: Int) {
   def currentRowId: Long = currentValues(currentValueIdx)
 
   def moveNextValue: Unit = {
-    if (currentValueIdx < currentValues.length - 1) {
+    if (currentValueIdx < currentValues.length - 1 && limitScanNum == 0) {
       currentValueIdx += 1
+    } else if (currentValueIdx < currentValues.length - 1 &&
+      limitScanNum > 0 && currentScanNum < limitScanNum) {
+      currentValueIdx += 1
+      currentScanNum += 1
     } else {
       moveNextKey
     }
   }
 
   def moveNextKey: Unit = {
+    currentScanNum = 1
     if (currentKeyIdx < currentNode.length - 1) {
       currentKeyIdx += 1
       currentValueIdx = 0
@@ -192,18 +207,28 @@ private[oap] class CurrentKey(node: IndexNode, keyIdx: Int, valueIdx: Int) {
     }
   }
 
-  def isEnd: Boolean = currentNode == null || (currentKey == IndexScanner.DUMMY_KEY_END)
+  def isEnd: Boolean = currentNode == null || currentKey == IndexScanner.DUMMY_KEY_END
 }
 
-private [oap] class RangeInterval(s: Key, e: Key, includeStart: Boolean, includeEnd: Boolean)
-  extends Serializable{
+private [oap] class RangeInterval(
+    s: Key,
+    e: Key,
+    includeStart: Boolean,
+    includeEnd: Boolean,
+    isNull: Boolean = false) extends Serializable {
   var start = s
   var end = e
   var startInclude = includeStart
   var endInclude = includeEnd
+  val isNullPredicate = isNull
 }
 
 private [oap] object RangeInterval{
-  def apply(s: Key, e: Key, includeStart: Boolean, includeEnd: Boolean): RangeInterval
-  = new RangeInterval(s, e, includeStart, includeEnd)
+  def apply(
+      s: Key,
+      e: Key,
+      includeStart: Boolean,
+      includeEnd: Boolean,
+      isNull: Boolean = false): RangeInterval =
+    new RangeInterval(s, e, includeStart, includeEnd, isNull)
 }

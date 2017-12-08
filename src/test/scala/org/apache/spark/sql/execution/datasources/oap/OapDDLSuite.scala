@@ -17,16 +17,15 @@
 
 package org.apache.spark.sql.execution.datasources.oap
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
-import org.apache.spark.sql.{QueryTest, Row}
-import org.apache.spark.sql.test.SharedSQLContext
+import org.apache.spark.sql.{QueryTest, Row, SaveMode}
+import org.apache.spark.sql.test.oap.SharedOapContext
 import org.apache.spark.util.Utils
 
 
-class OapDDLSuite extends QueryTest with SharedSQLContext with BeforeAndAfterEach {
+class OapDDLSuite extends QueryTest with SharedOapContext with BeforeAndAfterEach {
   import testImplicits._
 
   override def beforeEach(): Unit = {
@@ -48,6 +47,17 @@ class OapDDLSuite extends QueryTest with SharedSQLContext with BeforeAndAfterEac
     sqlContext.dropTempTable("oap_test_1")
     sqlContext.dropTempTable("oap_test_2")
     sqlContext.sql("drop table oap_partition_table")
+  }
+
+  test("write index for table read in from DS api") {
+    val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
+    val df = data.toDF("key", "value")
+    // TODO test when path starts with "hdfs:/"
+    val path = Utils.createTempDir("/tmp/").toString
+    df.write.format("oap").mode(SaveMode.Overwrite).save(path)
+    val oapDf = spark.read.format("oap").load(path)
+    oapDf.createOrReplaceTempView("t")
+    sql("create oindex index1 on t (key)")
   }
 
   test("show index") {
@@ -83,7 +93,7 @@ class OapDDLSuite extends QueryTest with SharedSQLContext with BeforeAndAfterEac
     val data: Seq[(Int, Int)] = (1 to 10).map { i => (i, i) }
     data.toDF("key", "value").createOrReplaceTempView("t")
 
-    val path = new Path(spark.sqlContext.conf.warehousePath)
+    val path = new Path(sqlConf.warehousePath)
 
     sql(
       """
@@ -105,10 +115,10 @@ class OapDDLSuite extends QueryTest with SharedSQLContext with BeforeAndAfterEac
       Row(1, 1, "c1") :: Row(2, 1, "c1") :: Row(3, 1, "c1") :: Nil)
 
     assert(path.getFileSystem(
-      new Configuration()).globStatus(new Path(path,
+      configuration).globStatus(new Path(path,
         "oap_partition_table/b=1/c=c1/*.index")).length != 0)
     assert(path.getFileSystem(
-      new Configuration()).globStatus(new Path(path,
+      configuration).globStatus(new Path(path,
         "oap_partition_table/b=2/c=c2/*.index")).length == 0)
 
     sql("create oindex index1 on oap_partition_table (a) partition (b=2, c='c2')")
@@ -117,11 +127,34 @@ class OapDDLSuite extends QueryTest with SharedSQLContext with BeforeAndAfterEac
     checkAnswer(sql("select * from oap_partition_table"),
       Row(1, 1, "c1") :: Row(2, 1, "c1") :: Row(3, 1, "c1") :: Row(4, 2, "c2") :: Nil)
     assert(path.getFileSystem(
-      new Configuration()).globStatus(new Path(path,
+      configuration).globStatus(new Path(path,
       "oap_partition_table/b=1/c=c1/*.index")).length == 0)
     assert(path.getFileSystem(
-      new Configuration()).globStatus(new Path(path,
+      configuration).globStatus(new Path(path,
       "oap_partition_table/b=2/c=c2/*.index")).length != 0)
+  }
+
+  test("create duplicated name index") {
+    val data: Seq[(Int, String)] = (1 to 100).map { i => (i, s"this is test $i") }
+    val df = data.toDF("a", "b")
+    val pathDir = Utils.createTempDir().getAbsolutePath
+    df.write.format("oap").mode(SaveMode.Overwrite).save(pathDir)
+    val oapDf = spark.read.format("oap").load(pathDir)
+    oapDf.createOrReplaceTempView("t")
+    sql("create oindex idxa on t (a)")
+    val path = new Path(pathDir)
+    val fs = path.getFileSystem(sparkContext.hadoopConfiguration)
+    val indexFiles1 = fs.listStatus(path).collect { case fileStatus if fileStatus.isFile &&
+      fileStatus.getPath.getName.endsWith(OapFileFormat.OAP_INDEX_EXTENSION) =>
+        fileStatus.getPath.getName
+    }
+
+    sql("create oindex if not exists idxa on t (a)")
+    val indexFiles2 = fs.listStatus(path).collect { case fileStatus if fileStatus.isFile &&
+      fileStatus.getPath.getName.endsWith(OapFileFormat.OAP_INDEX_EXTENSION) =>
+      fileStatus.getPath.getName
+    }
+    assert(indexFiles1 === indexFiles2)
   }
 }
 

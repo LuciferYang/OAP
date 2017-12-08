@@ -15,30 +15,18 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.datasources.oap.utils
+package org.apache.spark.sql.execution.datasources.oap.index
 
 import java.io.{ByteArrayOutputStream, DataOutputStream}
 
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.{RecordWriter, TaskAttemptContext}
 import org.junit.Assert._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.datasources.oap.index.{IndexOutputWriter, IndexUtils}
+import org.apache.spark.sql.execution.datasources.oap.io.IndexFile
 import org.apache.spark.unsafe.Platform
 
-class TestIndexOutputWriter extends IndexOutputWriter(bucketId = None, context = null) {
-  val buf = new ByteArrayOutputStream(8)
-  override protected lazy val writer: RecordWriter[Void, Any] =
-    new RecordWriter[Void, Any] {
-      override def close(context: TaskAttemptContext) = buf.close()
-      override def write(key: Void, value: Any) = value match {
-        case bytes: Array[Byte] => buf.write(bytes)
-        case i: Int => buf.write(i) // this will only write a byte
-      }
-    }
-}
 
 class IndexUtilsSuite extends SparkFunSuite with Logging {
   test("write int to unsafe") {
@@ -51,24 +39,15 @@ class IndexUtilsSuite extends SparkFunSuite with Logging {
     assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + 4) == 4321)
   }
 
-  test("write int to IndexOutputWriter") {
-    val out = new TestIndexOutputWriter
-    IndexUtils.writeInt(out, -19)
-    IndexUtils.writeInt(out, 4321)
-    out.close()
-    val bytes = out.buf.toByteArray
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET) == -19)
-    assert(Platform.getInt(bytes, Platform.BYTE_ARRAY_OFFSET + 4) == 4321)
-  }
-
   test("write long to IndexOutputWriter") {
-    val out = new TestIndexOutputWriter
+    val buf = new ByteArrayOutputStream(32)
+    val out = new DataOutputStream(buf)
     IndexUtils.writeLong(out, -19)
     IndexUtils.writeLong(out, 4321)
     IndexUtils.writeLong(out, 43210912381723L)
     IndexUtils.writeLong(out, -99128917321912L)
     out.close()
-    val bytes = out.buf.toByteArray
+    val bytes = buf.toByteArray
     assert(Platform.getLong(bytes, Platform.BYTE_ARRAY_OFFSET) == -19)
     assert(Platform.getLong(bytes, Platform.BYTE_ARRAY_OFFSET + 8) == 4321)
     assert(Platform.getLong(bytes, Platform.BYTE_ARRAY_OFFSET + 16) == 43210912381723L)
@@ -84,5 +63,37 @@ class IndexUtilsSuite extends SparkFunSuite with Logging {
       IndexUtils.indexFileFromDataFile(new Path("/path/to/t1.parquet"), "index1", "0").toString)
     assertEquals("/path/to/.t1.F91.index1.index",
       IndexUtils.indexFileFromDataFile(new Path("/path/to/t1"), "index1", "F91").toString)
+  }
+
+  test("get index work file path") {
+    assertEquals("/path/to/_temp/0/.t1.ABC.index1.index",
+      IndexUtils.getIndexWorkPath(
+        new Path("/path/to/.t1.data"),
+        new Path("/path/to"),
+        new Path("/path/to/_temp/0"),
+        ".t1.ABC.index1.index").toString)
+    assertEquals("hdfs:/path/to/_temp/1/a=3/b=4/.t1.ABC.index1.index",
+      IndexUtils.getIndexWorkPath(
+        new Path("hdfs:/path/to/a=3/b=4/.t1.data"),
+        new Path("/path/to"),
+        new Path("/path/to/_temp/1"),
+        ".t1.ABC.index1.index").toString)
+    assertEquals("hdfs://remote:8020/path/to/_temp/2/x=1/.t1.ABC.index1.index",
+      IndexUtils.getIndexWorkPath(
+        new Path("hdfs://remote:8020/path/to/x=1/.t1.data"),
+        new Path("/path/to/"),
+        new Path("/path/to/_temp/2/"),
+        ".t1.ABC.index1.index").toString)
+  }
+
+  test("writeHead to write common and consistent index version to all the index file headers") {
+    val buf = new ByteArrayOutputStream(8)
+    val out = new DataOutputStream(buf)
+    IndexUtils.writeHead(out, IndexFile.INDEX_VERSION)
+    val bytes = buf.toByteArray
+    assert(Platform.getByte(bytes, Platform.BYTE_ARRAY_OFFSET + 6) ==
+      (IndexFile.INDEX_VERSION >> 8).toByte)
+    assert(Platform.getByte(bytes, Platform.BYTE_ARRAY_OFFSET + 7) ==
+      (IndexFile.INDEX_VERSION & 0xFF).toByte)
   }
 }

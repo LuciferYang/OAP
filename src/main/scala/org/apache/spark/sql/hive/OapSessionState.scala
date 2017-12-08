@@ -19,19 +19,38 @@ package org.apache.spark.sql.hive
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.parser.{ParserInterface, SqlBaseParser}
-import org.apache.spark.sql.execution.SparkSqlParser
+import org.apache.spark.sql.execution.{SparkPlanner, SparkSqlParser}
+import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, FileSourceStrategy}
+import org.apache.spark.sql.execution.datasources.oap.OapStrategies
 import org.apache.spark.sql.hive.client.HiveClient
 import org.apache.spark.sql.internal.{SQLConf, VariableSubstitution}
 
 class OapSessionState(sparkSession: OapSession) extends HiveSessionState(sparkSession) {
   self =>
   // TODO extends `experimentalMethods.extraStrategies`
-  private lazy val sharedState: HiveSharedState = {
-    sparkSession.sharedState.asInstanceOf[HiveSharedState]
-  }
-  override lazy val metadataHive: HiveClient = sharedState.metadataHive.newSession()
+  override lazy val metadataHive: HiveClient =
+    sparkSession.sharedState.externalCatalog.asInstanceOf[HiveExternalCatalog].client.newSession()
 
   override lazy val sqlParser: ParserInterface = new OapSqlParser(conf)
+
+  override def planner: SparkPlanner = {
+    new SparkPlanner(sparkSession.sparkContext, conf, experimentalMethods.extraStrategies)
+    with OapStrategies
+    {
+      override def strategies: Seq[Strategy] = {
+            experimentalMethods.extraStrategies ++ oapStrategies ++ (
+              FileSourceStrategy ::
+              DataSourceStrategy ::
+              DDLStrategy ::
+              SpecialLimits ::
+              Aggregation ::
+              JoinSelection ::
+              InMemoryScans ::
+              BasicOperators :: Nil)
+      }
+    }
+  }
+
 }
 
 /**

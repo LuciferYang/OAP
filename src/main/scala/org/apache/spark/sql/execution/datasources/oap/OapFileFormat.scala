@@ -19,28 +19,28 @@ package org.apache.spark.sql.execution.datasources.oap
 
 import java.net.URI
 
-import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileStatus, FileSystem, FSDataOutputStream, Path}
+import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.hadoop.mapreduce.{Job, TaskAttemptContext}
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
-import org.apache.parquet.hadoop.util.{ContextUtil, SerializationUtil}
+import org.apache.parquet.hadoop.util.SerializationUtil
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, JoinedRow}
-import org.apache.spark.sql.catalyst.expressions.codegen.GenerateUnsafeProjection
+import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateOrdering, GenerateUnsafeProjection}
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.execution.datasources.oap.filecache.DataFileHandleCacheManager
 import org.apache.spark.sql.execution.datasources.oap.index.{IndexContext, ScannerBuilder}
 import org.apache.spark.sql.execution.datasources.oap.io._
 import org.apache.spark.sql.execution.datasources.oap.utils.OapUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.SerializableConfiguration
-
 
 private[sql] class OapFileFormat extends FileFormat
   with DataSourceRegister
@@ -48,21 +48,17 @@ private[sql] class OapFileFormat extends FileFormat
   with Serializable {
 
   override def initialize(
-    sparkSession: SparkSession,
-    options: Map[String, String],
-    fileCatalog: FileCatalog,
-    readFiles: Option[Seq[FileStatus]] = None): FileFormat = {
-    super.initialize(sparkSession, options, fileCatalog)
+      sparkSession: SparkSession,
+      options: Map[String, String],
+      files: Seq[FileStatus]): FileFormat = {
+    super.initialize(sparkSession, options, files)
 
     val hadoopConf = sparkSession.sparkContext.hadoopConfiguration
     // TODO
     // 1. Make the scanning etc. as lazy loading, as inferSchema probably not be called
     // 2. We need to pass down the oap meta file and its associated partition path
 
-    val parents = readFiles match {
-      case Some(files) => files.map(file => file.getPath.getParent)
-      case _ => fileCatalog.allFiles().map(_.getPath.getParent)
-    }
+    val parents = files.map(file => file.getPath.getParent)
 
     // TODO we support partitions, but this only read meta from one of the partitions
     val partition2Meta = parents.distinct.reverse.map { parent =>
@@ -84,9 +80,9 @@ private[sql] class OapFileFormat extends FileFormat
   var meta: Option[DataSourceMeta] = _
 
   override def prepareWrite(
-    sparkSession: SparkSession,
-    job: Job, options: Map[String, String],
-    dataSchema: StructType): OutputWriterFactory = {
+      sparkSession: SparkSession,
+      job: Job, options: Map[String, String],
+      dataSchema: StructType): OutputWriterFactory = {
     val conf = job.getConfiguration
 
     // TODO: Should we have our own config util instead of SqlConf?
@@ -116,100 +112,168 @@ private[sql] class OapFileFormat extends FileFormat
   }
 
   override def isSplitable(
-                            sparkSession: SparkSession,
-                            options: Map[String, String],
-                            path: Path): Boolean = false
+      sparkSession: SparkSession,
+      options: Map[String, String],
+      path: Path): Boolean = false
 
-  override private[sql] def buildReaderWithPartitionValues(
+  override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
       dataSchema: StructType,
       partitionSchema: StructType,
       requiredSchema: StructType,
       filters: Seq[Filter],
       options: Map[String, String],
-      hadoopConf: Configuration): (PartitionedFile) => Iterator[InternalRow] = {
-    // For Parquet data source, `buildReader` already handles partition values appending. Here we
-    // simply delegate to `buildReader`.
-    buildReader(
-      sparkSession, dataSchema, partitionSchema, requiredSchema, filters, options, hadoopConf)
-  }
-
-  override def buildReader(
-      sparkSession: SparkSession,
-      dataSchema: StructType,
-      partitionSchema: StructType,
-      requiredSchema: StructType,
-      filters: Seq[Filter],
-      options: Map[String, String],
-      hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
+      hadoopConf: Configuration
+  ): PartitionedFile => Iterator[InternalRow] = {
     // TODO we need to pass the extra data source meta information via the func parameter
-    // OapFileFormat.deserializeDataSourceMeta(hadoopConf) match {
     meta match {
       case Some(m) =>
         logDebug("Building OapDataReader with "
           + m.dataReaderClassName.substring(m.dataReaderClassName.lastIndexOf(".") + 1)
           + " ...")
 
+        // Check whether this filter conforms to certain patterns that could benefit from index
         def canTriggerIndex(filter: Filter): Boolean = {
           var attr: String = null
           def checkAttribute(filter: Filter): Boolean = filter match {
-              case Or(left, right) =>
-                checkAttribute(left) && checkAttribute(right)
-              case And(left, right) =>
-                checkAttribute(left) && checkAttribute(right)
-              case EqualTo(attribute, _) =>
-                if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-              case LessThan(attribute, _) =>
-                if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-              case LessThanOrEqual(attribute, _) =>
-                if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-              case GreaterThan(attribute, _) =>
-                if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-              case GreaterThanOrEqual(attribute, _) =>
-                if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-              case _ => true
-            }
+            case Or(left, right) =>
+              checkAttribute(left) && checkAttribute(right)
+            case And(left, right) =>
+              checkAttribute(left) && checkAttribute(right)
+            case EqualTo(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case LessThan(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case LessThanOrEqual(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case GreaterThan(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case GreaterThanOrEqual(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case In(attribute, _) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case IsNull(attribute) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case IsNotNull(attribute) =>
+              if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+            case _ => false
+          }
 
           checkAttribute(filter)
+        }
+
+        def order(sf: StructField): Ordering[Key] = GenerateOrdering.create(StructType(Array(sf)))
+        def canSkipFile(
+            columnStats: ArrayBuffer[ColumnStatistics],
+            filter: Filter,
+            schema: StructType): Boolean = filter match {
+          case Or(left, right) =>
+            canSkipFile(columnStats, left, schema) && canSkipFile(columnStats, right, schema)
+          case And(left, right) =>
+            canSkipFile(columnStats, left, schema) || canSkipFile(columnStats, right, schema)
+          case IsNotNull(attribute) =>
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            !stat.hasNonNullValue
+          case EqualTo(attribute, handle) =>
+            val key = OapUtils.keyFromAny(handle)
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            val comp = order(schema(idx))
+            (OapUtils.keyFromBytes(stat.min, schema(idx).dataType), OapUtils.keyFromBytes(
+              stat.max, schema(idx).dataType)) match {
+              case (Some(v1), Some(v2)) => comp.gt(v1, key) || comp.lt(v2, key)
+              case _ => false
+            }
+          case LessThan(attribute, handle) =>
+            val key = OapUtils.keyFromAny(handle)
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            val comp = order(schema(idx))
+            OapUtils.keyFromBytes(stat.min, schema(idx).dataType) match {
+              case Some(v) => comp.gteq(v, key)
+              case None => false
+            }
+          case LessThanOrEqual(attribute, handle) =>
+            val key = OapUtils.keyFromAny(handle)
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            val comp = order(schema(idx))
+            OapUtils.keyFromBytes(stat.min, schema(idx).dataType) match {
+              case Some(v) => comp.gt(v, key)
+              case None => false
+            }
+          case GreaterThan(attribute, handle) =>
+            val key = OapUtils.keyFromAny(handle)
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            val comp = order(schema(idx))
+            OapUtils.keyFromBytes(stat.max, schema(idx).dataType) match {
+              case Some(v) => comp.lteq(v, key)
+              case None => false
+            }
+          case GreaterThanOrEqual(attribute, handle) =>
+            val key = OapUtils.keyFromAny(handle)
+            val idx = schema.fieldIndex(attribute)
+            val stat = columnStats(idx)
+            val comp = order(schema(idx))
+            OapUtils.keyFromBytes(stat.max, schema(idx).dataType) match {
+              case Some(v) => comp.lt(v, key)
+              case None => false
+            }
+          case _ => false
         }
 
         val ic = new IndexContext(m)
 
         if (m.indexMetas.nonEmpty) { // check and use index
           logDebug("Supported Filters by Oap:")
-          // filter out the "filters" on which we can use the B+ tree index
+          // filter out the "filters" on which we can use index
           val supportFilters = filters.toArray.filter(canTriggerIndex)
           // After filtered, supportFilter only contains:
           // 1. Or predicate that contains only one attribute internally;
           // 2. Some atomic predicates, such as LessThan, EqualTo, etc.
           if (supportFilters.nonEmpty) {
-            // determine whether we can use B+ tree index
+            // determine whether we can use index
             supportFilters.foreach(filter => logDebug("\t" + filter.toString))
-            ScannerBuilder.build(supportFilters, ic)
+            // get index options such as limit, order, etc.
+            val indexOptions = options.filterKeys(OapFileFormat.oapOptimizationKeySeq.contains(_))
+            val maxChooseSize = sparkSession.conf.get(SQLConf.OAP_INDEXER_CHOICE_MAX_SIZE)
+            ScannerBuilder.build(supportFilters, ic, indexOptions, maxChooseSize)
           }
         }
-//        val filterScanner = ic.getScannerBuilder.map(_.build)
-        val filterScanner = ic.getScanner
 
+        val filterScanners = ic.getScanners
         val requiredIds = requiredSchema.map(dataSchema.fields.indexOf(_)).toArray
 
         hadoopConf.setDouble(SQLConf.OAP_FULL_SCAN_THRESHOLD.key,
           sparkSession.conf.get(SQLConf.OAP_FULL_SCAN_THRESHOLD))
+        hadoopConf.setBoolean(SQLConf.OAP_ENABLE_OINDEX.key,
+          sparkSession.conf.get(SQLConf.OAP_ENABLE_OINDEX))
         val broadcastedHadoopConf =
           sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
         (file: PartitionedFile) => {
           assert(file.partitionValues.numFields == partitionSchema.size)
+          val conf = broadcastedHadoopConf.value.value
+          val dataFile = DataFile(file.filePath, m.schema, m.dataReaderClassName, conf)
+          val dataFileHandle: DataFileHandle = DataFileHandleCacheManager(dataFile)
+          if (dataFileHandle.isInstanceOf[OapDataFileHandle] && filters.exists(filter =>
+            canSkipFile(dataFileHandle.asInstanceOf[OapDataFileHandle].columnsMeta.map(
+              _.statistics), filter, m.schema))) {
+            Iterator.empty
+          } else {
+            OapIndexInfo.partitionOapIndex.put(file.filePath, false)
+            val iter = new OapDataReader(
+              new Path(new URI(file.filePath)), m, filterScanners, requiredIds)
+              .initialize(conf, options)
 
-          val iter = new OapDataReader(
-            new Path(new URI(file.filePath)), m, filterScanner, requiredIds)
-            .initialize(broadcastedHadoopConf.value.value)
+            val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes
+            val joinedRow = new JoinedRow()
+            val appendPartitionColumns = GenerateUnsafeProjection.generate(fullSchema, fullSchema)
 
-          val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes
-          val joinedRow = new JoinedRow()
-          val appendPartitionColumns = GenerateUnsafeProjection.generate(fullSchema, fullSchema)
-
-          iter.map(d => appendPartitionColumns(joinedRow(d, file.partitionValues)))
+            iter.map(d => appendPartitionColumns(joinedRow(d, file.partitionValues)))
+          }
         }
       case None => (_: PartitionedFile) => {
         // TODO need to think about when there is no oap.meta file at all
@@ -218,28 +282,29 @@ private[sql] class OapFileFormat extends FileFormat
     }
   }
 
-  def hasAvailableIndex(expressions: Seq[Expression]): Boolean = {
-    meta match {
-      case Some(m) =>
-        val bTreeIndexAttrSet = new mutable.HashSet[String]()
-        val bitmapIndexAttrSet = new mutable.HashSet[String]()
-        var idx = 0
-        while(idx < m.indexMetas.length) {
-          m.indexMetas(idx).indexType match {
-            case BTreeIndex(entries) =>
-              bTreeIndexAttrSet.add(m.schema(entries(0).ordinal).name)
-            case BitMapIndex(entries) =>
-              entries.map(ordinal => m.schema(ordinal).name).foreach(bitmapIndexAttrSet.add)
-            case _ => // we don't support other types of index
+  /**
+   * Check if index satisfies strategies' requirements.
+   *
+   * @param expressions: Index expressions.
+   * @param requiredTypes: Required index metrics by optimization strategies.
+   * @return
+   */
+  def hasAvailableIndex(
+      expressions: Seq[Expression],
+      requiredTypes: Seq[IndexType] = Nil): Boolean = {
+    if (expressions.nonEmpty && sparkSession.conf.get(SQLConf.OAP_ENABLE_OINDEX)) {
+      meta match {
+        case Some(m) if requiredTypes.isEmpty =>
+          expressions.exists(m.isSupportedByIndex(_, None))
+        case Some(m) if requiredTypes.length == expressions.length =>
+          expressions.zip(requiredTypes).exists{ x =>
+            val expression = x._1
+            val requirement = Some(x._2)
+            m.isSupportedByIndex(expression, requirement)
           }
-          idx += 1
-        }
-        val hashSetList = new mutable.ListBuffer[mutable.HashSet[String]]()
-        hashSetList.append(bTreeIndexAttrSet)
-        hashSetList.append(bitmapIndexAttrSet)
-        expressions.exists(m.isSupportedByIndex(_, hashSetList))
-      case None => false
-    }
+        case _ => false
+      }
+    } else false
   }
 }
 
@@ -257,11 +322,25 @@ private[oap] class OapOutputWriterFactory(
     options: Map[String, String]) extends OutputWriterFactory {
 
   override def newInstance(
-                            path: String, bucketId: Option[Int],
-                            dataSchema: StructType, context: TaskAttemptContext): OutputWriter = {
-    // TODO we don't support bucket yet
-    assert(bucketId.isDefined == false, "Oap doesn't support bucket yet.")
+      path: String,
+      dataSchema: StructType,
+      context: TaskAttemptContext): OutputWriter = {
     new OapOutputWriter(path, dataSchema, context)
+  }
+
+  override def getFileExtension(context: TaskAttemptContext): String = {
+
+    val extensionMap = Map(
+      "UNCOMPRESSED" -> "",
+      "SNAPPY" -> ".snappy",
+      "GZIP" -> ".gzip",
+      "LZO" -> ".lzo")
+
+    val compressionType =
+      context.getConfiguration
+          .get(OapFileFormat.COMPRESSION, OapFileFormat.DEFAULT_COMPRESSION).trim
+
+    extensionMap(compressionType) + OapFileFormat.OAP_DATA_EXTENSION
   }
 
   private def oapMetaFileExists(path: Path): Boolean = {
@@ -332,21 +411,22 @@ private[oap] case class OapWriteResult(
     fileName: String, rowsWritten: Int, partitionString: String)
 
 private[oap] class OapOutputWriter(
-                                            path: String,
-                                            dataSchema: StructType,
-                                            context: TaskAttemptContext) extends OutputWriter {
+    path: String,
+    dataSchema: StructType,
+    context: TaskAttemptContext) extends OutputWriter {
   private var rowCount = 0
   private var partitionString: String = ""
   override def setPartitionString(ps: String): Unit = {
     partitionString = ps
   }
   private val writer: OapDataWriter = {
-    val isCompressed: Boolean = FileOutputFormat.getCompressOutput(context)
-    val file: Path = new Path(path, getFileName(OapFileFormat.OAP_DATA_EXTENSION))
-    val fs: FileSystem = file.getFileSystem(context.getConfiguration)
-    val fileOut: FSDataOutputStream = fs.create(file, false)
+    val isCompressed = FileOutputFormat.getCompressOutput(context)
+    val conf = context.getConfiguration
+    val file: Path = new Path(path)
+    val fs = file.getFileSystem(conf)
+    val fileOut = fs.create(file, false)
 
-    new OapDataWriter(isCompressed, fileOut, dataSchema, context.getConfiguration)
+    new OapDataWriter(isCompressed, fileOut, dataSchema, conf)
   }
 
   override def write(row: Row): Unit = throw new NotImplementedError("write(row: Row)")
@@ -360,16 +440,7 @@ private[oap] class OapOutputWriter(
     OapWriteResult(dataFileName, rowCount, partitionString)
   }
 
-  private def getFileName(extension: String): String = {
-    val configuration = context.getConfiguration
-    // this is the way how we pass down the uuid
-    val uniqueWriteJobId = configuration.get("spark.sql.sources.writeJobUUID")
-    val taskAttemptId = context.getTaskAttemptID
-    val split = taskAttemptId.getTaskID.getId
-    f"part-r-$split%05d-${uniqueWriteJobId}$extension"
-  }
-
-  def dataFileName: String = getFileName(OapFileFormat.OAP_DATA_EXTENSION)
+  def dataFileName: String = new Path(path).getName
 }
 
 private[sql] object OapFileFormat {
@@ -383,9 +454,9 @@ private[sql] object OapFileFormat {
   val PARQUET_DATA_FILE_CLASSNAME = classOf[ParquetDataFile].getCanonicalName
 
   val COMPRESSION = "oap.compression"
-  val DEFAULT_COMPRESSION = "UNCOMPRESSED"
+  val DEFAULT_COMPRESSION = SQLConf.OAP_COMPRESSION.defaultValueString
   val ROW_GROUP_SIZE = "oap.rowgroup.size"
-  val DEFAULT_ROW_GROUP_SIZE = "1024"
+  val DEFAULT_ROW_GROUP_SIZE = SQLConf.OAP_ROW_GROUP_SIZE.defaultValueString
 
   def serializeDataSourceMeta(conf: Configuration, meta: Option[DataSourceMeta]): Unit = {
     SerializationUtil.writeObjectToConfAsBase64(OAP_DATA_SOURCE_META, meta, conf)
@@ -393,5 +464,20 @@ private[sql] object OapFileFormat {
 
   def deserializeDataSourceMeta(conf: Configuration): Option[DataSourceMeta] = {
     SerializationUtil.readObjectFromConfAsBase64(OAP_DATA_SOURCE_META, conf)
+  }
+
+  /**
+   * Oap Optimization Options.
+   */
+  val OAP_QUERY_ORDER_OPTION_KEY = "oap.scan.file.order"
+  val OAP_QUERY_LIMIT_OPTION_KEY = "oap.scan.file.limit"
+  val OAP_INDEX_SCAN_NUM_OPTION_KEY = "oap.scan.index.limit"
+  val OAP_INDEX_GROUP_BY_OPTION_KEY = "oap.scan.index.group"
+
+  val oapOptimizationKeySeq : Seq[String] = {
+      OAP_QUERY_ORDER_OPTION_KEY ::
+      OAP_QUERY_LIMIT_OPTION_KEY ::
+      OAP_INDEX_SCAN_NUM_OPTION_KEY ::
+      OAP_INDEX_GROUP_BY_OPTION_KEY :: Nil
   }
 }
