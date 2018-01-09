@@ -37,6 +37,7 @@ trait FileFormat {
   @transient protected var options: Map[String, String] = _
   @transient protected var sparkSession: SparkSession = _
   @transient protected var files: Seq[FileStatus] = _
+  @transient protected  var splitable = true
 
   // Instead of making the FileFormat as stateless, we give chance to initialize
   // the FileFormat before reading or writing
@@ -49,6 +50,8 @@ trait FileFormat {
     this.files = files
     this
   }
+
+  def forbidSplit: Unit = splitable = false
 
   /**
    * When possible, this method should return the schema of the given `files`.  When the format

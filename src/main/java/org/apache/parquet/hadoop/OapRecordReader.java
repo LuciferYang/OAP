@@ -34,6 +34,8 @@ import org.apache.parquet.hadoop.metadata.IndexedParquetMetadata;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 
 import com.google.common.collect.Lists;
+
+import org.apache.parquet.hadoop.metadata.SplitRangeFilter;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 
@@ -43,6 +45,7 @@ public class OapRecordReader<T> implements RecordReader<T> {
     private Path file;
     private int[] globalRowIds;
     private ParquetMetadata footer;
+    private SplitRangeFilter rangeFilter;
 
     private InternalOapRecordReader<T> internalReader;
 
@@ -59,6 +62,8 @@ public class OapRecordReader<T> implements RecordReader<T> {
         this.configuration = configuration;
         this.globalRowIds = globalRowIds;
         this.footer = footer;
+        this.rangeFilter = new SplitRangeFilter(this.configuration);
+
     }
 
     @Override
@@ -93,13 +98,16 @@ public class OapRecordReader<T> implements RecordReader<T> {
         int index = 0;
 
         for (BlockMetaData block : blocks) {
+            boolean isUseful = rangeFilter.isUsefulBLock(block);
             int currentRowGroupStartRowId = nextRowGroupStartRowId;
             nextRowGroupStartRowId += block.getRowCount();
             IntList rowIdList = new IntArrayList();
             while (index < totalCount) {
                 int globalRowGroupId = globalRowIds[index];
                 if (globalRowGroupId < nextRowGroupStartRowId) {
-                    rowIdList.add(globalRowGroupId - currentRowGroupStartRowId);
+                    if (isUseful) {
+                        rowIdList.add(globalRowGroupId - currentRowGroupStartRowId);
+                    }
                     index++;
                 } else {
                     break;

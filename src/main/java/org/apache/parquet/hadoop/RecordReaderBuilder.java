@@ -23,12 +23,8 @@ public class RecordReaderBuilder<T> {
         this.readSupport = checkNotNull(readSupport, "readSupport");
         this.file = checkNotNull(path, "path");
         this.conf = checkNotNull(conf, "configuration");
-    }
-
-    private RecordReaderBuilder(ReadSupport<T> readSupport, Path path) {
-        this.readSupport = checkNotNull(readSupport, "readSupport");
-        this.file = checkNotNull(path, "path");
-        this.conf = new Configuration();
+        checkNotNull(conf.get("oap.split.startOffset"), "startOffset");
+        checkNotNull(conf.get("oap.split.endOffset"), "endOffset");
     }
 
     public RecordReaderBuilder<T> withGlobalRowIds(int[] globalRowIds) {
@@ -48,10 +44,6 @@ public class RecordReaderBuilder<T> {
 
     public RecordReader<T> buildIndexed() throws IOException {
         return new OapRecordReader<>(readSupport, file, conf, globalRowIds, footer);
-    }
-
-    public static <T> RecordReaderBuilder<T> builder(ReadSupport<T> readSupport, Path path) {
-        return new RecordReaderBuilder<>(readSupport, path);
     }
 
     public static <T> RecordReaderBuilder<T> builder(ReadSupport<T> readSupport, Path path, Configuration conf) {

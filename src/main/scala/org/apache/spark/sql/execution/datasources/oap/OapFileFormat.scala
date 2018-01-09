@@ -125,7 +125,9 @@ private[sql] class OapFileFormat extends FileFormat
   override def isSplitable(
       sparkSession: SparkSession,
       options: Map[String, String],
-      path: Path): Boolean = false
+      path: Path): Boolean = splitable &&
+    // TODO if oap file support split, remove this condition.
+    options.exists(_._1.startsWith("spark.sql.parquet"))
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
@@ -283,6 +285,8 @@ private[sql] class OapFileFormat extends FileFormat
             Iterator.empty
           } else {
             OapIndexInfo.partitionOapIndex.put(file.filePath, false)
+            conf.setLong("oap.split.startOffset", file.start)
+            conf.setLong("oap.split.endOffset", file.start + file.length)
             val iter = new OapDataReader(
               new Path(new URI(file.filePath)), m, filterScanners, requiredIds)
               .initialize(conf, options)

@@ -70,6 +70,7 @@ case class CreateIndex(
           throw new OapException(s"turn on ${
             SQLConf.OAP_PARQUET_ENABLED.key} to allow index building on parquet files")
         }
+        _fsRelation.fileFormat.forbidSplit
         (f, s, OapFileFormat.PARQUET_DATA_FILE_CLASSNAME, id, _fsRelation)
       case other =>
         throw new OapException(s"We don't support index building for ${other.simpleString}")
@@ -138,9 +139,6 @@ case class CreateIndex(
       // p.files.foreach(f => builder.addFileMeta(FileMeta("", 0, f.getPath.toString)))
       (metaBuilder, parent, existOld)
     })
-
-    val partitionColumns = relation.resolve(
-      fsRelation.partitionSchema, fsRelation.sparkSession.sessionState.analyzer.resolver)
 
     val projectList = indexColumns.map { indexColumn =>
       relation.output.find(p => p.name == indexColumn.columnName).get.withMetadata(
@@ -295,7 +293,8 @@ case class RefreshIndex(
           HadoopFsRelation(f, _, s, _, _: OapFileFormat, _), _, _) =>
         (f, s, OapFileFormat.OAP_DATA_FILE_CLASSNAME)
       case LogicalRelation(
-          HadoopFsRelation(f, _, s, _, _: ParquetFileFormat, _), _, _) =>
+      _fsRelation @ HadoopFsRelation(f, _, s, _, _: ParquetFileFormat, _), _, _) =>
+        _fsRelation.fileFormat.forbidSplit
         (f, s, OapFileFormat.PARQUET_DATA_FILE_CLASSNAME)
       case other =>
         throw new OapException(s"We don't support index refreshing for ${other.simpleString}")

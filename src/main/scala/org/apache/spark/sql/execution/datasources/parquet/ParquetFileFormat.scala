@@ -271,9 +271,10 @@ class ParquetFileFormat
   override def isSplitable(
       sparkSession: SparkSession,
       options: Map[String, String],
-      path: Path): Boolean = {
-      !sparkSession.conf.get(SQLConf.OAP_PARQUET_ENABLED)
-  }
+      path: Path): Boolean = splitable
+//  {
+//      !sparkSession.conf.get(SQLConf.OAP_PARQUET_ENABLED)
+//  }
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,

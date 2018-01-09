@@ -95,7 +95,7 @@ object FileSourceStrategy extends Strategy with Logging {
           oapFileFormat
             .initialize(_fsRelation.sparkSession,
               _fsRelation.options,
-              selectedPartitions.flatMap(p => p.files).toSeq)
+              selectedPartitions.flatMap(p => p.files))
 
           if (oapFileFormat.hasAvailableIndex(normalizedFilters)) {
             logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")

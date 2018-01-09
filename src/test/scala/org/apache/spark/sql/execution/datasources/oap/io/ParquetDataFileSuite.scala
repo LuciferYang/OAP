@@ -56,6 +56,8 @@ abstract class ParquetDataFileSuite extends SparkFunSuite
       SQLConf.PARQUET_INT96_AS_TIMESTAMP.defaultValue.get)
     conf.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
       SQLConf.PARQUET_WRITE_LEGACY_FORMAT.defaultValue.get)
+    conf.setLong("oap.split.startOffset", 0L)
+    conf.setLong("oap.split.endOffset", Long.MaxValue)
     conf
   }
 

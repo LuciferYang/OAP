@@ -22,12 +22,17 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
+import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.hadoop.metadata.SplitRangeFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 import static org.apache.parquet.format.converter.ParquetMetadataConverter.NO_FILTER;
 import static org.apache.parquet.hadoop.ParquetFileReader.readFooter;
+
+import com.google.common.collect.Lists;
 
 public class DefaultRecordReader<T> implements RecordReader<T> {
 
@@ -40,6 +45,8 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
 
     private ParquetMetadata footer;
 
+    private SplitRangeFilter rangeFilter;
+
     DefaultRecordReader(ReadSupport<T> readSupport,
                         Path file,
                         Configuration configuration,
@@ -48,6 +55,7 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
         this.file = file;
         this.configuration = configuration;
         this.footer = footer;
+        this.rangeFilter = new SplitRangeFilter(this.configuration);
     }
 
     @Override
@@ -69,7 +77,15 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
         if(this.footer == null){
             footer = readFooter(configuration, file, NO_FILTER);
         }
-        ParquetFileReader parquetFileReader = ParquetFileReader.open(configuration, file, footer);
+
+        List<BlockMetaData> usefulRowGroups = Lists.newArrayList();
+        for (BlockMetaData rowGroup : footer.getBlocks()) {
+            if(rangeFilter.isUsefulBLock(rowGroup)) {
+                usefulRowGroups.add(rowGroup);
+            }
+        }
+        ParquetFileReader parquetFileReader = ParquetFileReader.open(configuration, file,
+                new ParquetMetadata(footer.getFileMetaData(), usefulRowGroups));
         this.internalReader = new InternalParquetRecordReader<T>(readSupport);
         this.internalReader.initialize(parquetFileReader, configuration);
     }
