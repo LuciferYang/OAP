@@ -1,7 +1,9 @@
 package org.apache.parquet.hadoop.metadata;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.parquet.Preconditions;
+import org.apache.spark.sql.execution.datasources.oap.io.RowGroupMeta;
+
+import com.google.common.base.Preconditions;
 
 public class SplitRangeFilter {
 

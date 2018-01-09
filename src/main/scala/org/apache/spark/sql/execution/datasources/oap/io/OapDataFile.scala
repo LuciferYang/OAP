@@ -38,6 +38,8 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
   private val dictionaries = new Array[Dictionary](schema.length)
   private val codecFactory = new CodecFactory(configuration)
   private val meta: OapDataFileHandle = DataFileHandleCacheManager(this)
+  private val startOffset: Long = configuration.getLong("oap.split.startOffset", -1L)
+  private val endOffset: Long = configuration.getLong("oap.split.endOffset", -1L)
 
   def getDictionary(fiberId: Int, conf: Configuration): Dictionary = {
     val lastGroupMeta = meta.rowGroupsMeta(meta.groupCount - 1)
@@ -116,7 +118,9 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
   def iterator(conf: Configuration, requiredIds: Array[Int]): Iterator[InternalRow] = {
     val row = new BatchColumn()
     val iterator =
-      (0 until meta.groupCount).iterator.flatMap { groupId =>
+      (0 until meta.groupCount)
+        .filter(groupId => isUsefulRowGroup(meta.rowGroupsMeta(groupId)))
+        .iterator.flatMap { groupId =>
         val fiberCacheGroup = requiredIds.map(id =>
           FiberCacheManager.get(DataFiber(this, id, groupId), conf))
 
@@ -144,6 +148,8 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
   : Iterator[InternalRow] = {
     val row = new BatchColumn()
     val groupIds = rowIds.groupBy(rowId => rowId / meta.rowCountInEachGroup)
+      .filter(p => isUsefulRowGroup(meta.rowGroupsMeta(p._1)))
+
     val iterator =
       groupIds.iterator.flatMap {
         case (groupId, subRowIds) =>
@@ -184,5 +190,12 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
     val fs = p.getFileSystem(configuration)
 
     new OapDataFileHandle().read(fs.open(p), fs.getFileStatus(p).getLen)
+  }
+
+  private def isUsefulRowGroup(rowGroupMeta: RowGroupMeta): Boolean = {
+    val start = rowGroupMeta.start
+    val totalSize = rowGroupMeta.end - start
+    val midPoint = start + totalSize / 2
+    midPoint >= this.startOffset && midPoint < this.endOffset
   }
 }

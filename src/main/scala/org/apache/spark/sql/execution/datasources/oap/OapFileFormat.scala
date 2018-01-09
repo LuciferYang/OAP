@@ -125,9 +125,10 @@ private[sql] class OapFileFormat extends FileFormat
   override def isSplitable(
       sparkSession: SparkSession,
       options: Map[String, String],
-      path: Path): Boolean = splitable &&
+      path: Path): Boolean = splitable
+//  &&
     // TODO if oap file support split, remove this condition.
-    options.exists(_._1.startsWith("spark.sql.parquet"))
+//    options.exists(_._1.startsWith("spark.sql.parquet"))
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,

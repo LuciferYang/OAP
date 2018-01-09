@@ -78,7 +78,8 @@ class OapSuite extends QueryTest with SharedOapContext with BeforeAndAfter {
     val numTasks = sql("select * from parquet_table").queryExecution.toRdd.partitions.length
     try {
       sql("create oindex parquet_idx on parquet_table (a)")
-      assert(numTasks >= parquetPath.listFiles().count(_.getName.endsWith(".index")))
+      assert(numTasks == parquetPath.listFiles().filter(_.getName.endsWith(".parquet"))
+        .map(f => f.length() / 100L + 1).sum)
       sqlConf.setConf(SQLConf.FILES_MAX_PARTITION_BYTES, defaultMaxBytes)
     } finally {
       sql("drop oindex parquet_idx on parquet_table")
@@ -123,6 +124,8 @@ class OapSuite extends QueryTest with SharedOapContext with BeforeAndAfter {
     df.createOrReplaceTempView("oap_table")
     sql("create oindex oap_idx on oap_table (a)")
     val conf = spark.sparkContext.hadoopConfiguration
+    conf.setLong("oap.split.startOffset", 0)
+    conf.setLong("oap.split.endOffset", Long.MaxValue)
     val filePath = new Path(oapDataFile.toString)
     val metaPath = new Path(oapMetaFile.toString)
     val dataSourceMeta = DataSourceMeta.initialize(metaPath, conf)
