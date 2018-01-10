@@ -24,7 +24,7 @@ import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.hadoop.metadata.SplitRangeFilter;
+import org.apache.spark.sql.execution.datasources.oap.io.OapSplitFilter;
 
 import java.io.IOException;
 import java.util.List;
@@ -45,17 +45,18 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
 
     private ParquetMetadata footer;
 
-    private SplitRangeFilter rangeFilter;
+    private OapSplitFilter splitFilter;
 
     DefaultRecordReader(ReadSupport<T> readSupport,
                         Path file,
                         Configuration configuration,
-                        ParquetMetadata footer) {
+                        ParquetMetadata footer,
+                        OapSplitFilter splitFilter) {
         this.readSupport = readSupport;
         this.file = file;
         this.configuration = configuration;
         this.footer = footer;
-        this.rangeFilter = new SplitRangeFilter(this.configuration);
+        this.splitFilter = splitFilter;
     }
 
     @Override
@@ -80,7 +81,7 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
 
         List<BlockMetaData> usefulRowGroups = Lists.newArrayList();
         for (BlockMetaData rowGroup : footer.getBlocks()) {
-            if(rangeFilter.isUsefulBLock(rowGroup)) {
+            if(splitFilter.isUsefulBLock(rowGroup)) {
                 usefulRowGroups.add(rowGroup);
             }
         }

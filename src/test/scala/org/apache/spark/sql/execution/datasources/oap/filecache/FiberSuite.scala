@@ -40,14 +40,10 @@ class FiberSuite extends SharedOapContext with Logging {
     super.beforeAll()
     file = Utils.createTempDir()
     file.delete()
-    configuration.setLong("oap.split.startOffset", 0)
-    configuration.setLong("oap.split.endOffset", Long.MaxValue)
   }
 
   override def afterAll(): Unit = {
     Utils.deleteRecursively(file)
-    configuration.unset("oap.split.startOffset")
-    configuration.unset("oap.split.endOffset")
     super.afterAll()
   }
 
@@ -200,7 +196,7 @@ class FiberSuite extends SharedOapContext with Logging {
     val m = DataSourceMeta.newBuilder().
       withNewSchema(schema).
       withNewDataReaderClassName(OapFileFormat.OAP_DATA_FILE_CLASSNAME).build()
-    val reader = new OapDataReader(path, m, None, requiredIds)
+    val reader = new OapDataReader(path, m, None, requiredIds, OapSplitFilter.DEFAULT)
     val it = reader.initialize(configuration)
 
     var idx = 0

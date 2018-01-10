@@ -189,7 +189,8 @@ private[oap] class OapDataReader(
   path: Path,
   meta: DataSourceMeta,
   filterScanners: Option[IndexScanners],
-  requiredIds: Array[Int]) extends Logging {
+  requiredIds: Array[Int],
+  splitFilter: OapSplitFilter) extends Logging {
 
   def initialize(
       conf: Configuration,
@@ -222,13 +223,13 @@ private[oap] class OapDataReader(
         }
 
         val start = System.currentTimeMillis()
-        val iter = fileScanner.iterator(conf, requiredIds, getRowIds(options))
+        val iter = fileScanner.iterator(conf, requiredIds, getRowIds(options), splitFilter)
         val end = System.currentTimeMillis()
         logDebug("Construct File Iterator: " + (end - start) + "ms")
         iter
       case _ =>
         val start = System.currentTimeMillis()
-        val iter = fileScanner.iterator(conf, requiredIds)
+        val iter = fileScanner.iterator(conf, requiredIds, splitFilter)
         val end = System.currentTimeMillis()
         logDebug("Construct File Iterator: " + (end - start) + "ms")
 

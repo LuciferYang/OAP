@@ -5,6 +5,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.spark.sql.execution.datasources.oap.io.OapSplitFilter;
 
 import java.io.IOException;
 
@@ -18,13 +19,13 @@ public class RecordReaderBuilder<T> {
     private Configuration conf;
     private int[] globalRowIds = new int[0];
     private ParquetMetadata footer;
+    private OapSplitFilter splitFilter;
 
-    private RecordReaderBuilder(ReadSupport<T> readSupport, Path path, Configuration conf) {
+    private RecordReaderBuilder(ReadSupport<T> readSupport, Path path, Configuration conf, OapSplitFilter splitFilter) {
         this.readSupport = checkNotNull(readSupport, "readSupport");
         this.file = checkNotNull(path, "path");
         this.conf = checkNotNull(conf, "configuration");
-        checkNotNull(conf.get("oap.split.startOffset"), "startOffset");
-        checkNotNull(conf.get("oap.split.endOffset"), "endOffset");
+        this.splitFilter = checkNotNull(splitFilter, "configuration");
     }
 
     public RecordReaderBuilder<T> withGlobalRowIds(int[] globalRowIds) {
@@ -38,15 +39,18 @@ public class RecordReaderBuilder<T> {
     }
 
     public RecordReader<T> buildDefault() throws IOException {
-        return new DefaultRecordReader<>(readSupport, file, conf, footer);
+        return new DefaultRecordReader<>(readSupport, file, conf, footer, splitFilter);
     }
 
 
     public RecordReader<T> buildIndexed() throws IOException {
-        return new OapRecordReader<>(readSupport, file, conf, globalRowIds, footer);
+        return new OapRecordReader<>(readSupport, file, conf, globalRowIds, footer, splitFilter);
     }
 
-    public static <T> RecordReaderBuilder<T> builder(ReadSupport<T> readSupport, Path path, Configuration conf) {
-        return new RecordReaderBuilder<>(readSupport, path, conf);
+    public static <T> RecordReaderBuilder<T> builder(ReadSupport<T> readSupport,
+                                                     Path path,
+                                                     Configuration conf,
+                                                     OapSplitFilter splitFilter) {
+        return new RecordReaderBuilder<>(readSupport, path, conf, splitFilter);
     }
 }

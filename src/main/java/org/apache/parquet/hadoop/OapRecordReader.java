@@ -35,9 +35,9 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 
 import com.google.common.collect.Lists;
 
-import org.apache.parquet.hadoop.metadata.SplitRangeFilter;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
+import org.apache.spark.sql.execution.datasources.oap.io.OapSplitFilter;
 
 public class OapRecordReader<T> implements RecordReader<T> {
 
@@ -45,24 +45,25 @@ public class OapRecordReader<T> implements RecordReader<T> {
     private Path file;
     private int[] globalRowIds;
     private ParquetMetadata footer;
-    private SplitRangeFilter rangeFilter;
+    private OapSplitFilter oapSplitFilter;
 
     private InternalOapRecordReader<T> internalReader;
 
     private ReadSupport<T> readSupport;
 
     OapRecordReader(ReadSupport<T> readSupport,
-                        Path file,
-                        Configuration configuration,
-                        int[] globalRowIds,
-                        ParquetMetadata footer) {
+                    Path file,
+                    Configuration configuration,
+                    int[] globalRowIds,
+                    ParquetMetadata footer,
+                    OapSplitFilter oapSplitFilter) {
         Preconditions.checkNotNull(globalRowIds,"index collection can not be null!");
         this.readSupport = readSupport;
         this.file = file;
         this.configuration = configuration;
         this.globalRowIds = globalRowIds;
         this.footer = footer;
-        this.rangeFilter = new SplitRangeFilter(this.configuration);
+        this.oapSplitFilter = oapSplitFilter;
 
     }
 
@@ -98,7 +99,7 @@ public class OapRecordReader<T> implements RecordReader<T> {
         int index = 0;
 
         for (BlockMetaData block : blocks) {
-            boolean isUseful = rangeFilter.isUsefulBLock(block);
+            boolean isUseful = oapSplitFilter.isUsefulBLock(block);
             int currentRowGroupStartRowId = nextRowGroupStartRowId;
             nextRowGroupStartRowId += block.getRowCount();
             IntList rowIdList = new IntArrayList();

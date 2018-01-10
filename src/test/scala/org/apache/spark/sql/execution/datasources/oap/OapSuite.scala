@@ -25,7 +25,7 @@ import org.scalatest.BeforeAndAfter
 import org.apache.spark.scheduler.SparkListenerOapIndexInfoUpdate
 import org.apache.spark.sql._
 import org.apache.spark.sql.execution.datasources.oap.index.{IndexContext, ScannerBuilder}
-import org.apache.spark.sql.execution.datasources.oap.io.{OapDataReader, OapIndexInfo, OapIndexInfoStatus}
+import org.apache.spark.sql.execution.datasources.oap.io.{OapDataReader, OapIndexInfo, OapIndexInfoStatus, OapSplitFilter}
 import org.apache.spark.sql.execution.datasources.oap.utils.OapIndexInfoStatusSerDe
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
@@ -124,14 +124,13 @@ class OapSuite extends QueryTest with SharedOapContext with BeforeAndAfter {
     df.createOrReplaceTempView("oap_table")
     sql("create oindex oap_idx on oap_table (a)")
     val conf = spark.sparkContext.hadoopConfiguration
-    conf.setLong("oap.split.startOffset", 0)
-    conf.setLong("oap.split.endOffset", Long.MaxValue)
     val filePath = new Path(oapDataFile.toString)
     val metaPath = new Path(oapMetaFile.toString)
     val dataSourceMeta = DataSourceMeta.initialize(metaPath, conf)
     val requiredIds = Array(0, 1)
     // No index scanner is used.
-    val readerNoIndex = new OapDataReader(filePath, dataSourceMeta, None, requiredIds)
+    val readerNoIndex = new OapDataReader(filePath, dataSourceMeta, None, requiredIds
+      , OapSplitFilter.DEFAULT)
     val itNoIndex = readerNoIndex.initialize(conf)
     assert(itNoIndex.size == 100)
     val ic = new IndexContext(dataSourceMeta)
@@ -139,7 +138,8 @@ class OapSuite extends QueryTest with SharedOapContext with BeforeAndAfter {
       And(GreaterThan("a", 9), LessThan("a", 14)))
     ScannerBuilder.build(filters, ic)
     val filterScanners = ic.getScanners
-    val readerIndex = new OapDataReader(filePath, dataSourceMeta, filterScanners, requiredIds)
+    val readerIndex = new OapDataReader(filePath, dataSourceMeta, filterScanners, requiredIds
+      , OapSplitFilter.DEFAULT)
     val itIndex = readerIndex.initialize(conf)
     assert(itIndex.size == 4)
     conf.setBoolean(SQLConf.OAP_ENABLE_OINDEX.key, false)

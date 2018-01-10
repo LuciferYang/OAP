@@ -56,8 +56,6 @@ abstract class ParquetDataFileSuite extends SparkFunSuite
       SQLConf.PARQUET_INT96_AS_TIMESTAMP.defaultValue.get)
     conf.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
       SQLConf.PARQUET_WRITE_LEGACY_FORMAT.defaultValue.get)
-    conf.setLong("oap.split.startOffset", 0L)
-    conf.setLong("oap.split.endOffset", Long.MaxValue)
     conf
   }
 
@@ -128,7 +126,8 @@ class SimpleDataSuite extends ParquetDataFileSuite {
     val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0, 1)
     val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382)
-    val iterator = reader.iterator(configuration, requiredIds, rowIds)
+    val iterator = reader.iterator(configuration, requiredIds, rowIds
+      , OapSplitFilter.DEFAULT)
     val result = ArrayBuffer[Int]()
     while (iterator.hasNext) {
       val row = iterator.next
@@ -145,7 +144,8 @@ class SimpleDataSuite extends ParquetDataFileSuite {
     val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0, 1)
     val rowIds = Array.emptyIntArray
-    val iterator = reader.iterator(configuration, requiredIds, rowIds)
+    val iterator = reader.iterator(configuration, requiredIds, rowIds
+      , OapSplitFilter.DEFAULT)
     assert(!iterator.hasNext)
     val e = intercept[java.util.NoSuchElementException] {
       iterator.next()
@@ -156,7 +156,8 @@ class SimpleDataSuite extends ParquetDataFileSuite {
   test("read by columnIds ") {
     val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0)
-    val iterator = reader.iterator(configuration, requiredIds)
+    val iterator = reader.iterator(configuration, requiredIds
+      , OapSplitFilter.DEFAULT)
     val result = ArrayBuffer[ Int ]()
     while (iterator.hasNext) {
       val row = iterator.next
@@ -236,7 +237,8 @@ class NestedDataSuite extends ParquetDataFileSuite {
     val reader = ParquetDataFile(fileName, requestStructType, configuration)
     val requiredIds = Array(0, 1, 2)
     val rowIds = Array(1)
-    val iterator = reader.iterator(configuration, requiredIds, rowIds)
+    val iterator = reader.iterator(configuration, requiredIds, rowIds
+      , OapSplitFilter.DEFAULT)
     assert(iterator.hasNext)
     val row = iterator.next
     assert(row.numFields == 3)
@@ -247,7 +249,8 @@ class NestedDataSuite extends ParquetDataFileSuite {
   test("read all ") {
     val reader = ParquetDataFile(fileName, requestStructType, configuration)
     val requiredIds = Array(0, 2)
-    val iterator = reader.iterator(configuration, requiredIds)
+    val iterator = reader.iterator(configuration, requiredIds
+      , OapSplitFilter.DEFAULT)
     assert(iterator.hasNext)
     val rowOne = iterator.next
     assert(rowOne.numFields == 2)

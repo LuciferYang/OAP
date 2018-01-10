@@ -286,10 +286,9 @@ private[sql] class OapFileFormat extends FileFormat
             Iterator.empty
           } else {
             OapIndexInfo.partitionOapIndex.put(file.filePath, false)
-            conf.setLong("oap.split.startOffset", file.start)
-            conf.setLong("oap.split.endOffset", file.start + file.length)
             val iter = new OapDataReader(
-              new Path(new URI(file.filePath)), m, filterScanners, requiredIds)
+              new Path(new URI(file.filePath)), m, filterScanners, requiredIds,
+              OapSplitFilter(file.start, file.start + file.length))
               .initialize(conf, options)
 
             val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes

@@ -38,8 +38,9 @@ private[oap] case class ParquetDataFile
     throw new UnsupportedOperationException("Not support getFiberData Operation.")
   }
 
-  def iterator(conf: Configuration, requiredIds: Array[Int]): Iterator[UnsafeRow] = {
-    val recordReader = recordReaderBuilder(conf, requiredIds)
+  def iterator(conf: Configuration, requiredIds: Array[Int],
+               splitFilter: OapSplitFilter): Iterator[UnsafeRow] = {
+    val recordReader = recordReaderBuilder(conf, requiredIds, splitFilter)
       .buildDefault()
     recordReader.initialize()
     new FileRecordReaderIterator[UnsafeRow](
@@ -48,11 +49,12 @@ private[oap] case class ParquetDataFile
 
   def iterator(conf: Configuration,
                requiredIds: Array[Int],
-               rowIds: Array[Int]): Iterator[UnsafeRow] = {
+               rowIds: Array[Int],
+               splitFilter: OapSplitFilter): Iterator[UnsafeRow] = {
     if (rowIds == null || rowIds.length == 0) {
       Iterator.empty
     } else {
-      val recordReader = recordReaderBuilder(conf, requiredIds)
+      val recordReader = recordReaderBuilder(conf, requiredIds, splitFilter)
         .withGlobalRowIds(rowIds).buildIndexed()
       recordReader.initialize()
       new FileRecordReaderIterator[UnsafeRow](
@@ -61,7 +63,8 @@ private[oap] case class ParquetDataFile
   }
 
   private def recordReaderBuilder(conf: Configuration,
-                                  requiredIds: Array[Int]): RecordReaderBuilder[UnsafeRow] = {
+                                  requiredIds: Array[Int],
+                                  splitFilter: OapSplitFilter): RecordReaderBuilder[UnsafeRow] = {
     val requestSchemaString = {
       var requestSchema = new StructType
       for (index <- requiredIds) {
@@ -75,7 +78,7 @@ private[oap] case class ParquetDataFile
 
     val meta: ParquetDataFileHandle = DataFileHandleCacheManager(this)
     RecordReaderBuilder
-      .builder(readSupport, new Path(StringUtils.unEscapeString(path)), conf)
+      .builder(readSupport, new Path(StringUtils.unEscapeString(path)), conf, splitFilter)
       .withFooter(meta.footer)
   }
 
