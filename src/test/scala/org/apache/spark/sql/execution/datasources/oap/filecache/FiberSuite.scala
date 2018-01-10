@@ -40,10 +40,14 @@ class FiberSuite extends SharedOapContext with Logging {
     super.beforeAll()
     file = Utils.createTempDir()
     file.delete()
+    configuration.setLong("oap.split.startOffset", 0)
+    configuration.setLong("oap.split.endOffset", Long.MaxValue)
   }
 
   override def afterAll(): Unit = {
     Utils.deleteRecursively(file)
+    configuration.unset("oap.split.startOffset")
+    configuration.unset("oap.split.endOffset")
     super.afterAll()
   }
 

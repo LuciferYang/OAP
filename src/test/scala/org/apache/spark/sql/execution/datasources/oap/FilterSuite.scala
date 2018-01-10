@@ -20,9 +20,8 @@ package org.apache.spark.sql.execution.datasources.oap
 import java.sql.Date
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.internal.SQLConf
@@ -70,6 +69,7 @@ class FilterSuite extends QueryTest with SharedOapContext with BeforeAndAfterEac
     sqlContext.dropTempTable("parquet_test_date")
     sql("DROP TABLE IF EXISTS t_refresh")
     sql("DROP TABLE IF EXISTS t_refresh_parquet")
+    FileSystem.get(new Configuration())delete(new Path(currentPath), true)
   }
 
   test("empty table") {
