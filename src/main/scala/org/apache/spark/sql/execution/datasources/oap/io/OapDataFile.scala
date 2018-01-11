@@ -38,6 +38,8 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
   private val dictionaries = new Array[Dictionary](schema.length)
   private val codecFactory = new CodecFactory(configuration)
   private val meta: OapDataFileHandle = DataFileHandleCacheManager(this)
+  private var selectRows: Long = 0L
+  private var totalRows: Long = 0L
 
   def getDictionary(fiberId: Int, conf: Configuration): Dictionary = {
     val lastGroupMeta = meta.rowGroupsMeta(meta.groupCount - 1)
@@ -116,9 +118,11 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
   def iterator(conf: Configuration, requiredIds: Array[Int],
                splitFilter: OapSplitFilter): Iterator[InternalRow] = {
     val row = new BatchColumn()
-    val iterator =
-      (0 until meta.groupCount)
-        .filter(groupId => splitFilter.isUsefulRowGroup(meta.rowGroupsMeta(groupId)))
+    val usefulGroupIds = (0 until meta.groupCount)
+      .filter(groupId => splitFilter.isUsefulRowGroup(meta.rowGroupsMeta(groupId)))
+    totalRows = splitFilter.oapSplitTotalRows(meta, usefulGroupIds)
+    selectRows = totalRows
+    val iterator = usefulGroupIds
         .iterator.flatMap { groupId =>
         val fiberCacheGroup = requiredIds.map(id =>
           FiberCacheManager.get(DataFiber(this, id, groupId), conf))
@@ -148,6 +152,10 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
     val row = new BatchColumn()
     val groupIds = rowIds.groupBy(rowId => rowId / meta.rowCountInEachGroup)
       .filter(p => splitFilter.isUsefulRowGroup(meta.rowGroupsMeta(p._1)))
+
+    // item
+    selectRows = groupIds.map(item => item._2.length).sum
+    totalRows = splitFilter.oapSplitTotalRows(meta, groupIds.keys)
 
     val iterator =
       groupIds.iterator.flatMap {
@@ -190,4 +198,8 @@ private[oap] case class OapDataFile(path: String, schema: StructType,
 
     new OapDataFileHandle().read(fs.open(p), fs.getFileStatus(p).getLen)
   }
+
+  override def getSelectRowsCount: Long = selectRows
+
+  override def getTotalRowsCount: Long = totalRows
 }

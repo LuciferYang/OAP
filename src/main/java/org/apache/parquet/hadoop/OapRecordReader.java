@@ -51,6 +51,9 @@ public class OapRecordReader<T> implements RecordReader<T> {
 
     private ReadSupport<T> readSupport;
 
+    private long selectRows;
+    private long totalRows;
+
     OapRecordReader(ReadSupport<T> readSupport,
                     Path file,
                     Configuration configuration,
@@ -118,6 +121,8 @@ public class OapRecordReader<T> implements RecordReader<T> {
             if (!rowIdList.isEmpty()) {
                 inputBlockList.add(block);
                 rowIdsList.add(rowIdList);
+                this.totalRows += block.getRowCount();
+                this.selectRows += rowIdList.size();
             }
         }
         IndexedParquetMetadata indexedFooter =
@@ -132,5 +137,14 @@ public class OapRecordReader<T> implements RecordReader<T> {
     @Override
     public boolean nextKeyValue() throws IOException, InterruptedException {
         return internalReader.nextKeyValue();
+    }
+
+    public long getSelectRows() {
+        return selectRows;
+    }
+
+    @Override
+    public long getTotalRows() {
+        return totalRows;
     }
 }

@@ -33,6 +33,9 @@ import org.apache.spark.sql.types.StructType
 private[oap] case class ParquetDataFile
 (path: String, schema: StructType, configuration: Configuration) extends DataFile {
 
+  private var selectRows: Long = 0L
+  private var totalRows: Long = 0L
+
   def getFiberData(groupId: Int, fiberId: Int, conf: Configuration): FiberCache = {
     // TODO data cache
     throw new UnsupportedOperationException("Not support getFiberData Operation.")
@@ -43,6 +46,8 @@ private[oap] case class ParquetDataFile
     val recordReader = recordReaderBuilder(conf, requiredIds, splitFilter)
       .buildDefault()
     recordReader.initialize()
+    selectRows = recordReader.getSelectRows
+    totalRows = recordReader.getTotalRows
     new FileRecordReaderIterator[UnsafeRow](
       recordReader.asInstanceOf[RecordReader[UnsafeRow]])
   }
@@ -52,11 +57,15 @@ private[oap] case class ParquetDataFile
                rowIds: Array[Int],
                splitFilter: OapSplitFilter): Iterator[UnsafeRow] = {
     if (rowIds == null || rowIds.length == 0) {
+      val meta: ParquetDataFileHandle = DataFileHandleCacheManager(this)
+      totalRows = splitFilter.oapSplitTotalRows(meta)
       Iterator.empty
     } else {
       val recordReader = recordReaderBuilder(conf, requiredIds, splitFilter)
         .withGlobalRowIds(rowIds).buildIndexed()
       recordReader.initialize()
+      selectRows = recordReader.getSelectRows
+      totalRows = recordReader.getTotalRows
       new FileRecordReaderIterator[UnsafeRow](
         recordReader.asInstanceOf[RecordReader[UnsafeRow]])
     }
@@ -112,4 +121,8 @@ private[oap] case class ParquetDataFile
   }
 
   override def getDictionary(fiberId: Int, conf: Configuration): Dictionary = null
+
+  override def getSelectRowsCount: Long = selectRows
+
+  override def getTotalRowsCount: Long = totalRows
 }

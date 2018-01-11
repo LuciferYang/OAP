@@ -133,9 +133,6 @@ private[sql] class OapFileFormat extends FileFormat
       sparkSession: SparkSession,
       options: Map[String, String],
       path: Path): Boolean = splitable
-//  &&
-    // TODO if oap file support split, remove this condition.
-//    options.exists(_._1.startsWith("spark.sql.parquet"))
 
   override def buildReaderWithPartitionValues(
       sparkSession: SparkSession,
@@ -288,22 +285,13 @@ private[sql] class OapFileFormat extends FileFormat
           val dataFile = DataFile(file.filePath, m.schema, m.dataReaderClassName, conf)
           val dataFileHandle: DataFileHandle = DataFileHandleCacheManager(dataFile)
 
-          // read total records from metaFile
-          val totalRows = dataFileHandle match {
-            case oap: OapDataFileHandle =>
-              oap.totalRowCount()
-            case parquet: ParquetDataFileHandle =>
-              parquet.footer.getBlocks.asScala.foldLeft(0L) {
-                (sum, block) => sum + block.getRowCount
-              }
-            case _ => 0L
-          }
-
           if (dataFileHandle.isInstanceOf[OapDataFileHandle] && filters.exists(filter =>
             canSkipFile(dataFileHandle.asInstanceOf[OapDataFileHandle].columnsMeta.map(
               _.statistics), filter, m.schema))) {
+            val splitFilter = OapSplitFilter(file.start, file.start + file.length)
+            val oapMeta = dataFileHandle.asInstanceOf[OapDataFileHandle]
             selectedRows.add(0)
-            skippedRows.add(totalRows)
+            skippedRows.add(splitFilter.oapSplitTotalRows(oapMeta))
             Iterator.empty
           } else {
             OapIndexInfo.partitionOapIndex.put(file.filePath, false)
@@ -311,8 +299,8 @@ private[sql] class OapFileFormat extends FileFormat
               new Path(new URI(file.filePath)), m, filterScanners, requiredIds,
               OapSplitFilter(file.start, file.start + file.length))
             val iter = reader.initialize(conf, options)
-            selectedRows.add(reader.selectedRows.getOrElse(totalRows))
-            skippedRows.add(totalRows - reader.selectedRows.getOrElse(totalRows))
+            selectedRows.add(reader.selectedRows)
+            skippedRows.add(reader.totalRows - reader.selectedRows)
 
             val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes
             val joinedRow = new JoinedRow()

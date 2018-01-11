@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.execution.datasources.oap.io
 
+import scala.collection.JavaConverters._
+
 import org.apache.parquet.hadoop.metadata.BlockMetaData
 
 case class OapSplitFilter(startOffset: Long, endOffset: Long) {
@@ -39,6 +41,26 @@ case class OapSplitFilter(startOffset: Long, endOffset: Long) {
     val midPoint = start + totalSize / 2
     midPoint >= this.startOffset && midPoint < this.endOffset
   }
+
+  def oapSplitTotalRows(meta: OapDataFileHandle): Long = {
+    val usefulGroupIds = (0 until meta.groupCount)
+      .filter(groupId => isUsefulRowGroup(meta.rowGroupsMeta(groupId)))
+    oapSplitTotalRows(meta, usefulGroupIds)
+  }
+
+
+  def oapSplitTotalRows(meta: OapDataFileHandle, usefulGroupIds: Iterable[Int]): Long =
+    usefulGroupIds.map(groupId => if (groupId < meta.groupCount - 1) {
+      meta.rowCountInEachGroup
+    } else {
+      meta.rowCountInLastGroup
+    }).sum
+
+  def oapSplitTotalRows(meta: ParquetDataFileHandle): Long =
+    meta.footer.getBlocks.asScala
+      .map(block =>
+        if (isUsefulBLock(block)) block.getRowCount
+        else 0).sum
 }
 
 object  OapSplitFilter {

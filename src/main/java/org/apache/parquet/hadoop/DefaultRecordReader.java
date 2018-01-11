@@ -47,6 +47,8 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
 
     private OapSplitFilter splitFilter;
 
+    private long selectRows;
+
     DefaultRecordReader(ReadSupport<T> readSupport,
                         Path file,
                         Configuration configuration,
@@ -83,6 +85,7 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
         for (BlockMetaData rowGroup : footer.getBlocks()) {
             if(splitFilter.isUsefulBLock(rowGroup)) {
                 usefulRowGroups.add(rowGroup);
+                this.selectRows += rowGroup.getRowCount();
             }
         }
         ParquetFileReader parquetFileReader = ParquetFileReader.open(configuration, file,
@@ -94,5 +97,15 @@ public class DefaultRecordReader<T> implements RecordReader<T> {
     @Override
     public boolean nextKeyValue() throws IOException, InterruptedException {
         return internalReader.nextKeyValue();
+    }
+
+    @Override
+    public long getSelectRows() {
+        return selectRows;
+    }
+
+    @Override
+    public long getTotalRows() {
+        return selectRows;
     }
 }

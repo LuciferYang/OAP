@@ -42,6 +42,8 @@ abstract class DataFile {
   def iterator(conf: Configuration, requiredIds: Array[Int], rowIds: Array[Int]
                , splitFilter: OapSplitFilter): Iterator[InternalRow]
   def getDictionary(fiberId: Int, conf: Configuration): Dictionary
+  def getSelectRowsCount: Long
+  def getTotalRowsCount: Long
 }
 
 private[oap] object DataFile {

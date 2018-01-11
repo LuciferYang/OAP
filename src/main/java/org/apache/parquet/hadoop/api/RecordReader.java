@@ -60,4 +60,15 @@ public interface RecordReader<T> extends Closeable {
      * Close the record reader.
      */
     void close() throws IOException;
+
+    /**
+     * @return actual select record rows
+     */
+    long getSelectRows();
+
+    /**
+     *
+     * @return total rows with this reader
+     */
+    long getTotalRows();
 }
