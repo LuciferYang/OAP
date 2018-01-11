@@ -61,6 +61,7 @@ case class CreateIndexCommand(
     val (fileCatalog, schema, readerClassName, identifier, fsRelation) = relation match {
       case LogicalRelation(
       _fsRelation @ HadoopFsRelation(f, _, s, _, _: OapFileFormat, _), _, id) =>
+        _fsRelation.fileFormat.forbidSplit
         (f, s, OapFileFormat.OAP_DATA_FILE_CLASSNAME, id, _fsRelation)
       case LogicalRelation(
       _fsRelation @ HadoopFsRelation(f, _, s, _, _: ParquetFileFormat, _), _, id) =>
@@ -283,7 +284,8 @@ case class RefreshIndexCommand(
 
     val (fileCatalog, schema, readerClassName) = relation match {
       case LogicalRelation(
-          HadoopFsRelation(f, _, s, _, _: OapFileFormat, _), _, _) =>
+      _fsRelation @ HadoopFsRelation(f, _, s, _, _: OapFileFormat, _), _, _) =>
+        _fsRelation.fileFormat.forbidSplit
         (f, s, OapFileFormat.OAP_DATA_FILE_CLASSNAME)
       case LogicalRelation(
       _fsRelation @ HadoopFsRelation(f, _, s, _, _: ParquetFileFormat, _), _, _) =>
