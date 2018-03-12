@@ -16,21 +16,13 @@
  */
 package org.apache.spark.sql.execution.datasources.oap.benchmark
 
-import scala.collection.JavaConverters._
-
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
-import org.apache.parquet.hadoop.{DefaultRecordReader, VectorizedOapRecordReader}
-
 import org.apache.spark.sql.execution.datasources.oap.benchmark.BenchmarkUtils._
-import org.apache.spark.sql.execution.datasources.parquet._
-import org.apache.spark.sql.execution.datasources.parquet.ParquetReadBenchmark.{spark, withSQLConf}
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.util.Benchmark
 
 /**
- * Benchmark to measure parquet with oap read performance for IntScan.
+ * Benchmark to measure parquet with oap read performance for Indexed Sql.
  * To run this:
  * spark-submit --class <this class> --jars <spark sql test jar>
  */
@@ -47,53 +39,50 @@ object IndexedParquetReadBenchmark {
         spark.sql("select cast(id as INT) as id from t1")
           .write.parquet(dir.getCanonicalPath)
         spark.read.parquet(dir.getCanonicalPath).createOrReplaceTempView("tempTable")
+        spark.sql("create oindex id_index on tempTable(id)").count()
 
         val min = 0
         val mid = values/2
-        val max = values - 1
+        val max = values -1
 
-        // use mr indexed read, query minValue
-        benchmark.addCase("SQL Parquet MR -> min") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
-            spark.sql(s"""select sum(id) from tempTable where id = $min""").collect()
+        benchmark.addCase("SQL Parquet MR -> skipIndex") { iter =>
+          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+            OapConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.key -> "true") {
+            spark.sql(s"""select id from tempTable where id in ($min, $mid, $max)""").collect()
           }
         }
 
-        // use vec indexed read, query minValue
-        benchmark.addCase("SQL Parquet Vectorized -> min") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true") {
-            spark.sql(s"""select sum(id) from tempTable where id = $min""").collect()
+        benchmark.addCase("SQL Parquet Vectorized -> skipIndex") { iter =>
+          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true",
+            OapConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.key -> "true") {
+            spark.sql(s"""select id from tempTable where id in ($min, $mid, $max)""").collect()
           }
         }
 
-        // use mr indexed read, query midValue
-        benchmark.addCase("SQL Parquet MR -> mid") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
-            spark.sql(s"""select sum(id) from tempTable where id = $mid""").collect()
+        benchmark.addCase("SQL Parquet MR -> force useIndex") { iter =>
+          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false",
+            OapConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.key -> "false") {
+            spark.sql(s"""select id from tempTable where id in ($min, $mid, $max)""").collect()
           }
         }
 
-        // use vec indexed read, query midValue
-        benchmark.addCase("SQL Parquet Vectorized -> mid") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true") {
-            spark.sql(s"""select sum(id) from tempTable where id = $mid""").collect()
+        benchmark.addCase("SQL Parquet Vectorized -> force useIndex") { iter =>
+          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true",
+            OapConf.OAP_ENABLE_EXECUTOR_INDEX_SELECTION.key -> "false") {
+            spark.sql(s"""select id from tempTable where id in ($min, $mid, $max)""").collect()
           }
         }
 
-        // use mr indexed read, query maxValue
-        benchmark.addCase("SQL Parquet MR -> max") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "false") {
-            spark.sql(s"""select sum(id) from tempTable where id = $max""").collect()
-          }
-        }
-
-        // use vec indexed read, query maxValue
-        benchmark.addCase("SQL Parquet Vectorized -> max") { iter =>
-          withSQLConf(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key -> "true") {
-            spark.sql(s"""select sum(id) from tempTable where id = $max""").collect()
-          }
-        }
-
+        /*
+        Java HotSpot(TM) 64-Bit Server VM 1.8.0_144-b01 on Linux 2.6.32_1-18-0-0
+        Intel(R) Xeon(R) CPU E5-2650 v3 @ 2.30GHz
+        Indexed Sql Single Int Column Scan:      Best/Avg Time(ms)    Rate(M/s)   Per Row(ns)   Relative
+        ------------------------------------------------------------------------------------------------
+        SQL Parquet MR -> skipIndex                   2553 / 2577          6.2         162.3       1.0X
+        SQL Parquet Vectorized -> skipIndex            189 /  198         83.2          12.0      13.5X
+        SQL Parquet MR -> force useIndex               578 /  581         27.2          36.7       4.4X
+        SQL Parquet Vectorized -> force useIndex       158 /  168         99.5          10.0      16.2X
+        */
         benchmark.run()
       }
     }
