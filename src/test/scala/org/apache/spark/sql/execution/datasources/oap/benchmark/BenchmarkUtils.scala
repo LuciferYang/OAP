@@ -30,7 +30,6 @@ object BenchmarkUtils {
   conf.set("spark.sql.parquet.compression.codec", "snappy")
   conf.set("spark.memory.offHeap.size", "200m")
 
-
   val spark: SparkSession =
     SparkSession.builder.master("local[1]")
     .appName("test-oap-context")

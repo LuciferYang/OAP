@@ -44,10 +44,7 @@ object FullScanParquetReaderBenchmark {
           s"IF(rand(2) < $fractionOfNulls, NULL, cast(id as STRING)) as c2 from t1")
           .write.parquet(dir.getCanonicalPath)
         spark.read.parquet(dir.getCanonicalPath).createOrReplaceTempView("tempTable")
-
         val benchmark = new Benchmark("String with Nulls Scan", values)
-
-
         val configuration = new Configuration()
         val requestSchema = new StructType()
           .add(StructField("c1", StringType))
@@ -56,8 +53,6 @@ object FullScanParquetReaderBenchmark {
         configuration.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key, false)
         configuration.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key, false)
         configuration.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key, false)
-
-
         val files = SpecificParquetRecordReaderBase.listDirectory(dir).toArray
 
         benchmark.addCase("Oap Parquet MR") { _ =>
@@ -78,7 +73,6 @@ object FullScanParquetReaderBenchmark {
             }
           }
         }
-
 
         benchmark.addCase("Oap Parquet Vectorized") { _ =>
           var sum = 0
@@ -207,21 +201,18 @@ object FullScanParquetReaderBenchmark {
 
     // Benchmarks driving reader component directly.
     val readerBenchmark = new Benchmark("Parquet Reader Single Int Column Scan", values)
-
     withTempPath { dir =>
       withTempTable("t1", "tempTable") {
         spark.range(values).createOrReplaceTempView("t1")
         spark.sql("select cast(id as INT) as id from t1")
           .write.parquet(dir.getCanonicalPath)
         spark.read.parquet(dir.getCanonicalPath).createOrReplaceTempView("tempTable")
-
         val configuration = new Configuration()
         val requestSchema = new StructType().add(StructField("id", IntegerType))
         configuration.set(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA, requestSchema.json)
         configuration.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key, false)
         configuration.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key, false)
         configuration.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key, false)
-
         val files = SpecificParquetRecordReaderBase.listDirectory(dir).toArray
 
         // Driving the parquet reader in batch mode directly.
