@@ -22,7 +22,6 @@ import scala.util.Try
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 object BenchmarkUtils {
@@ -32,15 +31,11 @@ object BenchmarkUtils {
   conf.set("spark.memory.offHeap.size", "200m")
 
 
-  val spark: SparkSession = SparkSession.builder
-    .master("local[1]")
+  val spark: SparkSession =
+    SparkSession.builder.master("local[1]")
     .appName("test-oap-context")
     .config(conf)
     .getOrCreate()
-
-  // Set default configs. Individual cases will change them if necessary.
-  spark.conf.set(SQLConf.PARQUET_VECTORIZED_READER_ENABLED.key, "true")
-  spark.conf.set(SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key, "true")
 
   def withTempPath(f: File => Unit): Unit = {
     val path = Utils.createTempDir()
@@ -64,4 +59,3 @@ object BenchmarkUtils {
     }
   }
 }
-

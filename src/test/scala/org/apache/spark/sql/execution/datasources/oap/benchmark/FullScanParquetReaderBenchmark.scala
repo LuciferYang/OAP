@@ -352,4 +352,3 @@ object FullScanParquetReaderBenchmark {
     intScanBenchmark(1024 * 1024 * 15)
   }
 }
-
