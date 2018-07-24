@@ -18,9 +18,12 @@
 package org.apache.spark.sql.execution.datasources.oap.io
 
 import java.io.{File, IOException}
+import java.net.{InetAddress, URLDecoder}
 
 import scala.collection.mutable.ArrayBuffer
 
+import com.google.common.collect.Maps
+import java.util
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.column.ColumnDescriptor
@@ -36,12 +39,23 @@ import org.apache.parquet.schema.{MessageType, PrimitiveType}
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName._
 import org.apache.parquet.schema.Type.Repetition.REQUIRED
 import org.scalatest.BeforeAndAfterEach
-
 import org.apache.spark.SparkFunSuite
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest
+import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest
+import org.elasticsearch.action.admin.indices.refresh.RefreshRequest
+import org.elasticsearch.action.index.IndexRequest
+import org.elasticsearch.action.search.SearchRequest
+import org.elasticsearch.common.settings.Settings
+import org.elasticsearch.common.transport.InetSocketTransportAddress
+import org.elasticsearch.common.xcontent.{XContentBuilder, XContentFactory}
+import org.elasticsearch.index.query.QueryBuilders
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
-import org.apache.spark.sql.execution.datasources.parquet.{ParquetReadSupportWrapper, VectorizedColumnReader, VectorizedColumnReaderWrapper}
+import org.apache.spark.sql.execution.datasources.parquet.{OapTransportClient, ParquetReadSupportWrapper, VectorizedColumnReader, VectorizedColumnReaderWrapper}
 import org.apache.spark.sql.execution.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.oap.OapConf
@@ -279,6 +293,210 @@ class NestedDataSuite extends ParquetDataFileSuite {
     val docIdTwo = rowTwo.getLong(0)
     assert(docIdTwo == 20L)
     iterator.close()
+  }
+}
+
+class EsAndLikeTest extends SparkFunSuite with SharedOapContext
+  with BeforeAndAfterEach with Logging {
+
+  protected val fileDir: File = new File("/Users/baidu/SourceCode/data")
+
+  protected val fileName: String = "/Users/baidu/SourceCode/data/part-02999.hiveFile"
+
+  override def beforeEach(): Unit = {
+    configuration.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key,
+      SQLConf.PARQUET_BINARY_AS_STRING.defaultValue.get)
+    configuration.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key,
+      SQLConf.PARQUET_INT96_AS_TIMESTAMP.defaultValue.get)
+    configuration.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
+      SQLConf.PARQUET_WRITE_LEGACY_FORMAT.defaultValue.get)
+  }
+
+  override def afterEach(): Unit = {
+    configuration.unset(SQLConf.PARQUET_BINARY_AS_STRING.key)
+    configuration.unset(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key)
+    configuration.unset(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key)
+  }
+
+  private val requestSchema: StructType = new StructType()
+    .add(StructField("uuid", StringType))
+    .add(StructField("url", StringType))
+
+  private val item = "m.5200xsc.com"
+
+  test("test contains") {
+
+    val loopTimes = 100
+    var time = 0L
+
+    (0 until loopTimes).foreach { _ =>
+      val start = System.currentTimeMillis()
+      val context = Some(VectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, requestSchema, configuration)
+      reader.setVectorizedContext(context)
+      val requiredIds = Array(1)
+      val iterator = reader.iterator(requiredIds)
+      var count = 0
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        val url = row.getString(0)
+        if (url.contains(item)) {
+          count = count + 1
+        }
+      }
+      val end = System.currentTimeMillis()
+      time = time + (end - start)
+    }
+    logWarning(s" no es readFileTime = ${time * 1.0 / loopTimes}")
+  }
+
+  test("test es query") {
+
+
+    val esStart = System.currentTimeMillis()
+
+    // connect es
+    val settings = Settings.builder
+      .put("cluster.name", "elasticsearch")
+      .put("client.transport.sniff", true)
+      .put("client.transport.ignore_cluster_name", false)
+      .put("client.transport.ping_timeout", "5s")
+      .put("client.transport.nodes_sampler_interval", "5s").build
+    val client = new OapTransportClient(settings)
+    val address = new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300)
+    client.addTransportAddress(address)
+    client.connectedNodes()
+    val esConnectedTime = System.currentTimeMillis()
+    logWarning(s" es op time = ${esConnectedTime - esStart}")
+
+    val loopTimes = 100
+    var time = 0L
+    var esTime = 0L
+
+    (0 until loopTimes).foreach { _ =>
+
+      val esQueryStart = System.currentTimeMillis()
+      val indexName = "dmp_index"
+      val docType = "dmp"
+      val queryBuilder = QueryBuilders.wildcardQuery("url", s"*$item*")
+      val searchResponse =
+        client.prepareSearch(indexName)
+          .setTypes(docType)
+          .addDocValueField("rowId")
+          .setQuery(queryBuilder).setSize(10000).execute().actionGet()
+      val esQueryEnd = System.currentTimeMillis()
+      esTime = esTime + (esQueryEnd - esQueryStart)
+      val hits = searchResponse.getHits.getHits
+//      val eqQueryEnd = System.currentTimeMillis()
+//      logWarning(s" es query time = ${eqQueryEnd - eqQueryStart}")
+
+//      val extractStart = System.currentTimeMillis()
+      val rowIds = hits.map(f => f.getField("rowId").getValue[Long].toInt).sorted
+//      val extractEnd = System.currentTimeMillis()
+//      logWarning(s" extract time = ${extractEnd - extractStart}")
+
+//      val readFileStart = System.currentTimeMillis()
+      val context = Some(VectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, requestSchema, configuration)
+      reader.setVectorizedContext(context)
+      val requiredIds = Array(1)
+
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+      var count = 0
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        val url = row.getString(0)
+        if (url.contains(s"$item")) {
+          count = count + 1
+        }
+      }
+      val readFileEnd = System.currentTimeMillis()
+      time = time + (readFileEnd - esQueryStart)
+    }
+    logWarning(s" esQueryTime = ${esTime * 1.0 / loopTimes}")
+    logWarning(s" readFileTime = ${time * 1.0 / loopTimes}")
+  }
+
+  ignore("test es index") {
+    // connect es
+    val settings = Settings.builder
+      .put("cluster.name", "elasticsearch")
+      .put("client.transport.sniff", true)
+      .put("client.transport.ignore_cluster_name", false)
+      .put("client.transport.ping_timeout", "5s")
+      .put("client.transport.nodes_sampler_interval", "5s").build
+    val client = new OapTransportClient(settings)
+    val address = new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300)
+    client.addTransportAddress(address)
+    client.connectedNodes()
+
+    val indexName = "dmp_index"
+    val docType = "dmp"
+
+    val indicesExistsRequest = new IndicesExistsRequest(indexName)
+    val indicesExistsResponse = client.admin().indices().exists(indicesExistsRequest).actionGet()
+    logWarning(s" ${indicesExistsResponse.isExists}")
+
+    val deleteIndexRequest = new DeleteIndexRequest(indexName)
+    val deleteIndexResponse = client.admin().indices().delete(deleteIndexRequest).actionGet()
+    logWarning(s" ${deleteIndexResponse.isAcknowledged}")
+
+
+    val mapping = XContentFactory.jsonBuilder()
+      .startObject()
+      .startObject("settings")
+      .field("number_of_shards", 1)
+      .field("number_of_replicas", 0)
+      .endObject()
+      .startObject("mappings")
+      .startObject(docType)
+      .startObject("properties")
+      .startObject("url")
+      .field("type", "text")
+      .field("store", "yes")
+      .field("index", "analyzed")
+      .endObject()
+      .startObject("rowId")
+      .field("type", "integer")
+      .field("store", "yes")
+      .endObject()
+      .endObject()
+      .endObject()
+      .endObject()
+      .endObject()
+
+    val createIndexResponse = client.admin().indices()
+      .prepareCreate(indexName)
+      .setSource(mapping)
+      .execute().actionGet()
+    logWarning(s" ${createIndexResponse.isAcknowledged}")
+
+    val context = Some(VectorizedContext(null, null, returningBatch = false))
+    val reader = ParquetDataFile(fileName, requestSchema, configuration)
+    reader.setVectorizedContext(context)
+    val requiredIds = Array(1)
+    val iterator = reader.iterator(requiredIds)
+    var rowId: Int = 0
+
+    while (iterator.hasNext) {
+      val row = iterator.next()
+      val url = row.getString(0)
+      // TODO use bulk request
+      val obj = XContentFactory.jsonBuilder().startObject()
+        .field("url", url)
+        .field("rowId", rowId)
+        .endObject()
+
+      val indexRequestBuilder =
+        client.prepareIndex(indexName, docType).setSource(obj).setId(rowId.toString)
+      indexRequestBuilder.execute().actionGet()
+      rowId = rowId + 1
+    }
+
+    val refreshResponse =
+      client.admin().indices().refresh(new RefreshRequest(indexName)).actionGet()
+    logWarning(s"${refreshResponse.getSuccessfulShards}")
+
   }
 }
 
@@ -639,6 +857,217 @@ class ParquetFiberDataLoaderSuite extends ParquetDataFileSuite {
       loadSingleColumn(Array(0, 1))
     }
     assert(exception.getMessage.contains("Only can get single column every time"))
+  }
+}
+
+class TEsAndLikeTest extends SparkFunSuite with SharedOapContext
+  with BeforeAndAfterEach with Logging {
+
+  protected val fileDir: File = new File("/Users/baidu/SourceCode/turing-data")
+
+  protected val fileName: String = "/Users/baidu/SourceCode/turing-data/part-00016"
+
+  override def beforeEach(): Unit = {
+    configuration.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key,
+      SQLConf.PARQUET_BINARY_AS_STRING.defaultValue.get)
+    configuration.setBoolean(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key,
+      SQLConf.PARQUET_INT96_AS_TIMESTAMP.defaultValue.get)
+    configuration.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
+      SQLConf.PARQUET_WRITE_LEGACY_FORMAT.defaultValue.get)
+  }
+
+  override def afterEach(): Unit = {
+    configuration.unset(SQLConf.PARQUET_BINARY_AS_STRING.key)
+    configuration.unset(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key)
+    configuration.unset(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key)
+  }
+
+  private val requestSchema: StructType = new StructType()
+    .add(StructField("target_url", StringType))
+
+  private val item = "baidu"
+
+  test("test contains") {
+
+    val loopTimes = 100
+    var time = 0L
+
+    (0 until loopTimes).foreach { _ =>
+      val start = System.currentTimeMillis()
+      val context = Some(VectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, requestSchema, configuration)
+      reader.setVectorizedContext(context)
+      val requiredIds = Array(0)
+      val iterator = reader.iterator(requiredIds)
+      var count = 0
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        val targetUrl = if (row.isNullAt(0)) {
+          ""
+        } else {
+          row.getString(0)
+        }
+        if (targetUrl.contains(item)) {
+          count = count + 1
+        }
+      }
+      val end = System.currentTimeMillis()
+      time = time + (end - start)
+    }
+    logWarning(s" no es readFileTime = ${time * 1.0 / loopTimes}")
+  }
+
+  test("test es query") {
+    val esStart = System.currentTimeMillis()
+
+    // connect es
+    val settings = Settings.builder
+      .put("cluster.name", "elasticsearch")
+      .put("client.transport.sniff", true)
+      .put("client.transport.ignore_cluster_name", false)
+      .put("client.transport.ping_timeout", "5s")
+      .put("client.transport.nodes_sampler_interval", "5s").build
+    val client = new OapTransportClient(settings)
+    val address = new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300)
+    client.addTransportAddress(address)
+    client.connectedNodes()
+    val esConnectedTime = System.currentTimeMillis()
+    logWarning(s" es op time = ${esConnectedTime - esStart}")
+
+    val loopTimes = 100
+    var time = 0L
+    var esTime = 0L
+
+    (0 until loopTimes).foreach { _ =>
+
+      val esQueryStart = System.currentTimeMillis()
+      val indexName = "turing_index"
+      val docType = "targeUrlType"
+      val queryBuilder = QueryBuilders.wildcardQuery("target_url", s"*baidu.com*")
+      val searchResponse =
+        client.prepareSearch(indexName)
+          .setTypes(docType)
+          .addDocValueField("rowId")
+          .setQuery(queryBuilder).setSize(10000).execute().actionGet()
+      val esQueryEnd = System.currentTimeMillis()
+      esTime = esTime + (esQueryEnd - esQueryStart)
+      val hits = searchResponse.getHits.getHits
+      //      val eqQueryEnd = System.currentTimeMillis()
+      //      logWarning(s" es query time = ${eqQueryEnd - eqQueryStart}")
+
+      //      val extractStart = System.currentTimeMillis()
+      val rowIds = hits.map(f => f.getField("rowId").getValue[Long].toInt).sorted
+
+      if(rowIds.nonEmpty) {
+        val context = Some(VectorizedContext(null, null, returningBatch = false))
+        val reader = ParquetDataFile(fileName, requestSchema, configuration)
+        reader.setVectorizedContext(context)
+        val requiredIds = Array(0)
+
+        val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        var count = 0
+        while (iterator.hasNext) {
+          val row = iterator.next()
+          val targetUrl = if (row.isNullAt(0)) {
+            ""
+          } else {
+            row.getString(0)
+          }
+          if (targetUrl.contains(s"$item")) {
+            count = count + 1
+          }
+        }
+      }
+      val readFileEnd = System.currentTimeMillis()
+      time = time + (readFileEnd - esQueryStart)
+    }
+    logWarning(s" esQueryTime = ${esTime * 1.0 / loopTimes}")
+    logWarning(s" readFileTime = ${time * 1.0 / loopTimes}")
+  }
+
+  test("test es index") {
+    // connect es
+    val settings = Settings.builder
+      .put("cluster.name", "elasticsearch")
+      .put("client.transport.sniff", true)
+      .put("client.transport.ignore_cluster_name", false)
+      .put("client.transport.ping_timeout", "5s")
+      .put("client.transport.nodes_sampler_interval", "5s").build
+    val client = new OapTransportClient(settings)
+    val address = new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300)
+    client.addTransportAddress(address)
+    client.connectedNodes()
+
+    val indexName = "turing_index"
+    val docType = "targeUrlType"
+
+    val indicesExistsRequest = new IndicesExistsRequest(indexName)
+    val indicesExistsResponse = client.admin().indices().exists(indicesExistsRequest).actionGet()
+    logWarning(s" ${indicesExistsResponse.isExists}")
+
+    if(indicesExistsResponse.isExists) {
+      val deleteIndexRequest = new DeleteIndexRequest(indexName)
+      val deleteIndexResponse = client.admin().indices().delete(deleteIndexRequest).actionGet()
+      logWarning(s" ${deleteIndexResponse.isAcknowledged}")
+    }
+
+    val mapping = XContentFactory.jsonBuilder()
+      .startObject()
+      .startObject("settings")
+      .field("number_of_shards", 1)
+      .field("number_of_replicas", 0)
+      .endObject()
+      .startObject("mappings")
+      .startObject(docType)
+      .startObject("properties")
+      .startObject("target_url")
+      .field("type", "text")
+      .field("index", "analyzed")
+      .endObject()
+      .startObject("rowId")
+      .field("type", "integer")
+      .endObject()
+      .endObject()
+      .endObject()
+      .endObject()
+      .endObject()
+
+    val createIndexResponse = client.admin().indices()
+      .prepareCreate(indexName)
+      .setSource(mapping)
+      .execute().actionGet()
+    logWarning(s" ${createIndexResponse.isAcknowledged}")
+
+    val context = Some(VectorizedContext(null, null, returningBatch = false))
+    val reader = ParquetDataFile(fileName, requestSchema, configuration)
+    reader.setVectorizedContext(context)
+    val requiredIds = Array(0)
+    val iterator = reader.iterator(requiredIds)
+    var rowId: Int = 0
+
+    while (iterator.hasNext) {
+      val row = iterator.next()
+      val targetUrl = if (row.isNullAt(0)) {
+        ""
+      } else {
+        URLDecoder.decode(row.getString(0))
+      }
+      // TODO use bulk request
+      val obj = XContentFactory.jsonBuilder().startObject()
+        .field("target_url", targetUrl)
+        .field("rowId", rowId)
+        .endObject()
+
+      val indexRequestBuilder =
+        client.prepareIndex(indexName, docType).setSource(obj).setId(rowId.toString)
+      indexRequestBuilder.execute().actionGet()
+      rowId = rowId + 1
+    }
+
+    val refreshResponse =
+      client.admin().indices().refresh(new RefreshRequest(indexName)).actionGet()
+    logWarning(s"${refreshResponse.getSuccessfulShards}")
+
   }
 }
 

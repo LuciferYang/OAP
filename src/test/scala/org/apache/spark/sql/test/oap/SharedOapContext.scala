@@ -47,6 +47,7 @@ trait SharedOapContextBase extends SharedSQLContext {
 
   // avoid the overflow of offHeap memory
   sparkConf.set("spark.memory.offHeap.size", "100m")
+  sparkConf.set("spark.debug.maxToStringFields", "100")
 
   protected override def beforeAll(): Unit = {
     super.beforeAll()

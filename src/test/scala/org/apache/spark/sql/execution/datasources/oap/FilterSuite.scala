@@ -17,8 +17,12 @@
 
 package org.apache.spark.sql.execution.datasources.oap
 
+import java.net.URLDecoder
 import java.sql.Date
 
+import java.util
+import org.apache.commons.io.FileUtils
+import org.apache.commons.lang3.{StringEscapeUtils, StringUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
@@ -1063,5 +1067,48 @@ class FilterSuite extends QueryTest with SharedOapContext with BeforeAndAfterEac
           Row(1, "this is test 1"):: Nil)
       }
     }
+  }
+
+  test("my test") {
+    import scala.collection.JavaConverters._
+    val dataFrame = spark.read.parquet("/Users/baidu/SourceCode/turing-data")
+//    dataFrame.createOrReplaceTempView("dmp")
+    dataFrame.createOrReplaceTempView("ad_wise")
+    val count = sql("select count(1) from ad_wise where searchid like '%3cba70c6d9a3%'").collect()
+    logWarning(s"rows count = ${count(0).getLong(0)}")
+//    dataFrame.printSchema()
+//    val frame = sql("select searchid from ad_wise").collect()
+//    val strings = frame.map(r => r.getString(0))
+//    val collection = strings.toList.asJavaCollection
+//    FileUtils.writeLines(
+//      FileUtils.getFile("/Users/baidu/SourceCode/searchid.txt"), collection)
+//    val result = sql("select searchid from ad_wise").rdd
+//      .map(row => (row.getString(0), 1)).reduceByKey(_ + _)
+//    val collection = result.collect().toList.asJavaCollection
+//    FileUtils.writeLines(
+//      FileUtils.getFile("/Users/baidu/SourceCode/searchid.txt"), collection)
+//    val result = sql("select url from dmp").collect()
+//    val rows: Seq[(String, Int)] = result.map(r => {
+//      val value = r.getString(0)
+//      val start = value.indexOf("//")
+//      if (start == -1) {
+//        ""
+//      } else {
+//        val end = value.indexOf("/", start + 2)
+//        if (end == -1) {
+//          value.substring(start + 2)
+//        } else {
+//          value.substring(start + 2, end)
+//        }
+//      }
+//    }).filter(v => !v.equals("")).groupBy(k => k).map(f => (f._1, f._2.length)).toSeq
+//    rows.toDF().repartition(1).write.csv("/Users/baidu/SourceCode/text")
+//
+//    logWarning(s"all count = ${count(0)}")
+//    val start = System.currentTimeMillis()
+//    val rows = sql("select * from dmp where url like '%5200xsc.com%'").collect()
+//    val count = sql("select count(1) from dmp").collect()
+//    val end = System.currentTimeMillis()
+//    logWarning(s"time = ${end-start}ms, rows count = ${rows.length} $count")
   }
 }
