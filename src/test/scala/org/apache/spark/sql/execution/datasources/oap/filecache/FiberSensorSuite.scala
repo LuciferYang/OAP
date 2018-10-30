@@ -152,8 +152,9 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
 
     def getAns(file: String): Seq[String] = fiberSensor.getHosts(file)
 
-    def checkExistence(host: String, execId: String, in: String): Boolean =
-      in.contains(host) && in.contains(execId)
+    def checkExistence(host: String, execId: String, ins: Seq[String]): Boolean =
+      ins.exists(in => in.contains(host) && in.contains(execId))
+
 
     val filePath = "file1"
     val groupCount = 30
@@ -169,7 +170,7 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
     val fiberInfo = SparkListenerCustomInfoUpdate(host1, execId1,
       "OapFiberCacheHeartBeatMessager", CacheStatusSerDe.serialize(fcs))
     fiberSensor.updateLocations(fiberInfo)
-    assert(checkExistence(host1, execId1, getAns(filePath)(0)))
+    assert(checkExistence(host1, execId1, getAns(filePath)))
 
     // executor2 update
     val host2 = "host2"
@@ -186,8 +187,8 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
       "OapFiberCacheHeartBeatMessager", CacheStatusSerDe
         .serialize(Seq(FiberCacheStatus(filePath, bitSet2, groupCount, fieldCount))))
     fiberSensor.updateLocations(fiberInfo2)
-    assert(checkExistence(host2, execId2, getAns(filePath)(0)))
-    assert(checkExistence(host1, execId1, getAns(filePath)(1)))
+    assert(checkExistence(host2, execId2, getAns(filePath)))
+    assert(checkExistence(host1, execId1, getAns(filePath)))
 
     // Another file cache update, doesn't influence filePath
     val filePath2 = "file2"
@@ -202,8 +203,8 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
       "OapFiberCacheHeartBeatMessager", CacheStatusSerDe
         .serialize(Seq(FiberCacheStatus(filePath2, bitSet3, groupCount, fieldCount))))
     fiberSensor.updateLocations(fiberInfo3)
-    assert(checkExistence(host2, execId2, getAns(filePath)(0)))
-    assert(checkExistence(host1, execId1, getAns(filePath)(1)))
+    assert(checkExistence(host2, execId2, getAns(filePath)))
+    assert(checkExistence(host1, execId1, getAns(filePath)))
 
     // New info for filePath host2:executor2, less cached may because of eviction
     val bitSet4 = new BitSet(90)
@@ -214,8 +215,8 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
         .serialize(Seq(FiberCacheStatus(filePath, bitSet4, groupCount, fieldCount))))
     fiberSensor.updateLocations(fiberInfo4)
     // Now host1: execId1 comes first
-    assert(checkExistence(host1, execId1, getAns(filePath)(0)))
-    assert(checkExistence(host2, execId2, getAns(filePath)(1)))
+    assert(checkExistence(host1, execId1, getAns(filePath)))
+    assert(checkExistence(host2, execId2, getAns(filePath)))
 
     // New info for filePath, host1: execId2, Driver maintaining 3 records for it, while
     // NUM_GET_HOSTS returned

@@ -25,7 +25,7 @@ import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 public class ParquetFooter {
 
   private final FileMetaData fileMetaData;
-  private final List<OrderedBlockMetaData> blocks;
+  private final List<? extends OrderedBlockMetaData> blocks;
 
   public ParquetFooter(
       FileMetaData fileMetaData,
@@ -38,7 +38,7 @@ public class ParquetFooter {
     return fileMetaData;
   }
 
-  public List<OrderedBlockMetaData> getBlocks() {
+  public List<? extends OrderedBlockMetaData> getBlocks() {
     return blocks;
   }
 

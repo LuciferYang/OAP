@@ -20,6 +20,7 @@ package org.apache.spark.sql.execution.datasources.oap.filecache
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
+import scala.util.Random
 
 import com.google.common.base.Throwables
 
@@ -102,12 +103,14 @@ private[sql] class FiberSensor extends Logging {
     // From max to min
     val sorted = fileToHosts.getOrDefault(filePath, Seq.empty).map(
       hostAndInfo => (hostAndInfo.host, hostAndInfo.status.cachedFiberCount)).sortBy((_._2 * -1))
-    sorted.take(FiberSensor.NUM_GET_HOSTS).map(_._1)
+    val ret = Random.shuffle(sorted.take(FiberSensor.NUM_GET_HOSTS).map(_._1))
+//    logWarning(s"getHosts: ${ret.toString()}")
+    ret
   }
 }
 
 private[sql] object FiberSensor {
-  val NUM_GET_HOSTS = 2
+  val NUM_GET_HOSTS = 3
   val OAP_CACHE_HOST_PREFIX = "OAP_HOST_"
   val OAP_CACHE_EXECUTOR_PREFIX = "_OAP_EXECUTOR_"
 }

@@ -281,15 +281,20 @@ class DAGScheduler(
     if (locations.nonEmpty) {
       // TODO use constant value for prefixes, these prefixes should be the same with that in
       // [[org.apache.spark.sql.execution.datasources.oap.FiberSensor]]
-      val cacheLocs = locations.filter(_.startsWith("OAP_HOST_"))
+      //      val cacheLocs = locations.filter(_.startsWith("OAP_HOST_"))
+      //      val others = locations.filterNot(_.startsWith("OAP_HOST_"))
+      val (cacheLocs, otherLocs) = locations.partition(_.startsWith("OAP_HOST_"))
       val oapPrefs = cacheLocs.map { cacheLoc =>
         val host = cacheLoc.split("_OAP_EXECUTOR_")(0).stripPrefix("OAP_HOST_")
-        val execId = cacheLoc.split("_OAP_EXECUTOR_")(1)
-        (host, execId)
+         val execId = cacheLoc.split("_OAP_EXECUTOR_")(1)
+         (host, execId)
       }
+      val otherPrefs = otherLocs.map(TaskLocation(_))
+
       if (oapPrefs.nonEmpty) {
-        logDebug(s"got oap prefer location value oapPrefs is ${oapPrefs}")
-        return oapPrefs.map(loc => TaskLocation(loc._1, loc._2))
+        return oapPrefs.map(loc => TaskLocation(loc._1, loc._2)) union otherPrefs
+      } else {
+        return otherPrefs
       }
     }
     Seq.empty

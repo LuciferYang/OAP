@@ -143,11 +143,13 @@ private[sql] class OapFileFormat extends FileFormat
     }
     val conf = sparkSession.sessionState.conf
     // TODO modify conditions after oap support batch return
-    readerClassName.equals(OapFileFormat.PARQUET_DATA_FILE_CLASSNAME) &&
+    val ret = readerClassName.equals(OapFileFormat.PARQUET_DATA_FILE_CLASSNAME) &&
       conf.parquetVectorizedReaderEnabled &&
       conf.wholeStageEnabled &&
       schema.length <= conf.wholeStageMaxNumFields &&
       schema.forall(_.dataType.isInstanceOf[AtomicType])
+//    logWarning(s"supportBatch = ${ret}")
+    ret
   }
 
   override def isSplitable(
@@ -247,7 +249,7 @@ private[sql] class OapFileFormat extends FileFormat
         val returningBatch = supportBatch(sparkSession, resultSchema)
         val broadcastedHadoopConf =
           sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
-
+        logWarning(s"hit index = ${hitIndexColumns.nonEmpty}, use cache = $enableVectorizedReader")
         (file: PartitionedFile) => {
           assert(file.partitionValues.numFields == partitionSchema.size)
           val conf = broadcastedHadoopConf.value.value
@@ -301,7 +303,10 @@ private[sql] class OapFileFormat extends FileFormat
   def hasAvailableIndex(
       expressions: Seq[Expression],
       requiredTypes: Seq[IndexType] = Nil): Boolean = {
-    if (expressions.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
+    if (sparkSession.conf.get(OapConf.OAP_ENABLE_DATA_CACHE)) {
+//      logWarning("Enable Data Cache.")
+      true
+    } else if (expressions.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
       meta match {
         case Some(m) if requiredTypes.isEmpty =>
           expressions.exists(m.isSupportedByIndex(_, None))

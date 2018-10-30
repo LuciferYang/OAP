@@ -123,29 +123,12 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
       } else {
         // if returnColumnarBatch, mark columnarBatch filtered status.
         // else assignment batchIdsIter.
-        if (returnColumnarBatch) {
-          // we can do same operation use markFiltered as follow code:
-          // int current = 0;
-          // for (Integer target : ids)
-          // { while (current < target){
-          // columnarBatch.markFiltered(current);
-          // current++; }
-          // current++; }
-          // current++;
-          // while (current < numBatched){
-          // columnarBatch.markFiltered(current); current++; }
-          // it a little complex and use current version,
-          // we can revert use above code if need.
-          columnarBatch.markAllFiltered();
-            for (Integer rowId : ids) {
-              columnarBatch.markValid(rowId);
-            }
-          } else {
-            batchIds = ids;
-            numBatched = ids.size();
-          }
-          currentPageNumber++;
-          return true;
+        if (!returnColumnarBatch) {
+          batchIds = ids;
+          numBatched = ids.size();
+        }
+        currentPageNumber++;
+        return true;
       }
     }
 
@@ -168,7 +151,10 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
 
   @Override
   protected void readNextRowGroup() throws IOException {
+    long start = System.nanoTime();
     RowGroupDataAndRowIds rowGroupDataAndRowIds = reader.readNextRowGroupAndRowIds();
+    long end = System.nanoTime();
+    logger.warn("read row group with cols = {}, time = {}", columnarBatch.numCols(), (end - start));
     initColumnReaders(rowGroupDataAndRowIds.getPageReadStore());
     divideRowIdsIntoPages(rowGroupDataAndRowIds.getRowIds());
   }

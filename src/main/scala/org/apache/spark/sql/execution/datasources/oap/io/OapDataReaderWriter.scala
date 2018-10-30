@@ -246,13 +246,13 @@ private[oap] class OapDataReaderV1(
     }
 
     def fullScan: OapCompletionIterator[InternalRow] = {
-      val start = if (log.isDebugEnabled) System.currentTimeMillis else 0
+      val start = System.currentTimeMillis
       val iter = fileScanner.iterator(requiredIds, filters)
-      val end = if (log.isDebugEnabled) System.currentTimeMillis else 0
+      val end = System.currentTimeMillis
 
       _totalRows = fileScanner.totalRows()
 
-      logDebug("Construct File Iterator: " + (end - start) + " ms")
+//      logWarning("fullScan Construct File Iterator: " + (end - start) + " ms")
       iter
     }
 
@@ -289,14 +289,15 @@ private[oap] class OapDataReaderV1(
         }
 
 
-        val start = if (log.isDebugEnabled) System.currentTimeMillis else 0
+        val start = System.currentTimeMillis
         val rows = getRowIds(options)
+        val end = System.currentTimeMillis
+//        logWarning("getRowIds: " + (end - start) + s"ms, rowSize = ${rows.length}")
         val iter = fileScanner.iteratorWithRowIds(requiredIds, rows, filters)
-        val end = if (log.isDebugEnabled) System.currentTimeMillis else 0
-
+        val end1 = System.currentTimeMillis
         _indexStat = HIT_INDEX
         _rowsReadWhenHitIndex = Some(rows.length)
-        logDebug("Construct File Iterator: " + (end - start) + "ms")
+//        logWarning("UseIndex Construct File Iterator: " + (end1 - start) + "ms")
         iter
       case Some(_) =>
         _indexStat = IGNORE_INDEX

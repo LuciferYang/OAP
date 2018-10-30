@@ -33,4 +33,20 @@ public class IndexedBlockMetaData extends OrderedBlockMetaData {
   public IntList getNeedRowIds() {
     return needRowIds;
   }
+
+  public int idsSize() {
+    return needRowIds.size();
+  }
+
+  public int firstIdx() {
+    return needRowIds.getInt(0);
+  }
+
+  public int lastIdx() {
+    return needRowIds.getInt(needRowIds.size() - 1);
+  }
+
+  public int idxSpan() {
+    return needRowIds.getInt(needRowIds.size() - 1) - needRowIds.getInt(0) + 1;
+  }
 }

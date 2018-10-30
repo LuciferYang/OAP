@@ -245,4 +245,11 @@ object OapConf {
         "is empty, it will store in the data file path")
       .stringConf
       .createWithDefault("")
+
+  val OAP_ENABLE_DATA_CACHE =
+    SqlConfAdapter.buildConf("spark.sql.oap.data.cache.enabled")
+      .internal()
+      .doc("To indicate if enable oap data cache, default false")
+      .booleanConf
+      .createWithDefault(false)
 }

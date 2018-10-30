@@ -334,8 +334,9 @@ private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
 
   // Either it directs us to skip this file(SKIP_INDEX) or use index(USE_INDEX)
   def isIndexFileBeneficial(dataPath: Path, conf: Configuration): Boolean = {
+    val start = System.currentTimeMillis
     val analysisResults = scanners.map(s => (s, s.analysisResByPolicies(dataPath, conf)))
-    if (analysisResults.forall(_._2 == StatsAnalysisResult.FULL_SCAN)) {
+    val ret = if (analysisResults.forall(_._2 == StatsAnalysisResult.FULL_SCAN)) {
       false
     } else {
       if (analysisResults.forall(_._2 != StatsAnalysisResult.SKIP_INDEX)) {
@@ -343,6 +344,9 @@ private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
       }
       true
     }
+    val end = System.currentTimeMillis
+//    logWarning("isIndexFileBeneficial: " + (end - start) + "ms")
+    ret
   }
 
   def order: SortDirection = actualUsedScanners.head.meta.indexType.indexOrder.head
