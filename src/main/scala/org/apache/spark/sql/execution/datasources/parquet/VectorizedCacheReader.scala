@@ -157,17 +157,16 @@ class VectorizedCacheReader(
           val end = System.nanoTime()
           loadFiberTime += (end - start)
           dataFile.update(id, fiberCache)
+          val start2 = System.nanoTime()
           val reader = ParquetDataFiberReader(fiberCache.getBaseOffset,
             columnarBatch.column(order).dataType(), rowCount)
-          val start2 = System.nanoTime()
-          reader.readRowGroupMetas()
           val end2 = System.nanoTime()
           loadDicTime += (end2 - start2)
           reader
         }
     }
     logDebug(s"load row group with cols = ${columnarBatch.numCols}, " +
-      s"loadFiberTime = $loadFiberTime, loadDicTime = $loadDicTime")
+      s"loadFiberTime = $loadFiberTime, loadDicTimTestFiberCache.scalae = $loadDicTime")
 
     totalCountLoadedSoFar += rowCount
     currentRowGroupRowsReturned = 0

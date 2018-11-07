@@ -75,7 +75,6 @@ class ParquetDataFiberReaderSuite extends SparkFunSuite with SharedOapContext wi
     )
 
     val reader = ParquetDataFiberReader(offset, IntegerType, count)
-    reader.readRowGroupMetas()
     reader.readBatch(0, count, vector)
     (0 until count).foreach(i => assert(vector.getInt(i) == 2 * i))
   }
