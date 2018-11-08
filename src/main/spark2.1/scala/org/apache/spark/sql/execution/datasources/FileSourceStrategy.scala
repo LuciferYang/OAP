@@ -100,7 +100,7 @@ object FileSourceStrategy extends Strategy with Logging {
               selectedPartitions.flatMap(p => p.files))
 
           if (oapFileFormat.hasAvailableIndex(normalizedFilters)) {
-            logWarning("hasAvailableIndex = true, will replace with OapFileFormat.")
+            logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
             val parquetOptions: Map[String, String] =
               Map(SQLConf.PARQUET_BINARY_AS_STRING.key ->
                 _fsRelation.sparkSession.sessionState.conf.isParquetBinaryAsString.toString,
