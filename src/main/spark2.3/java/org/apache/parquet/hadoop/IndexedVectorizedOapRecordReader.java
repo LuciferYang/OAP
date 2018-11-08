@@ -190,7 +190,10 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
 
   @Override
   protected void readNextRowGroup() throws IOException {
+    long start = System.nanoTime();
     RowGroupDataAndRowIds rowGroupDataAndRowIds = reader.readNextRowGroupAndRowIds();
+    long end = System.nanoTime();
+    logger.warn("read row group with cols = {}, time = {}", columnarBatch.numCols(), (end - start));
     initColumnReaders(rowGroupDataAndRowIds.getPageReadStore());
     divideRowIdsIntoPages(rowGroupDataAndRowIds.getRowIds());
   }

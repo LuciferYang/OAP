@@ -35,7 +35,12 @@ import org.apache.spark.sql.execution.vectorized.ColumnarBatch;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class VectorizedOapRecordReader extends SpecificOapRecordReaderBase<Object> {
+
+  protected static Logger logger = LoggerFactory.getLogger(VectorizedOapRecordReader.class);
 
     /**
      * Batch of rows that we assemble and the current index we've returned. Every time this
@@ -290,10 +295,13 @@ public class VectorizedOapRecordReader extends SpecificOapRecordReaderBase<Objec
 
       int num = (int) Math.min((long) columnarBatch.capacity(),
         totalCountLoadedSoFar - rowsReturned);
+      long start = System.nanoTime();
       for (int i = 0; i < columnReaders.length; ++i) {
         if (columnReaders[i] == null) continue;
         columnReaders[i].readBatch(num, columnarBatch.column(i));
       }
+      long end = System.nanoTime();
+      logger.warn("read batch with cols = {}, time = {}", columnarBatch.numCols(), (end - start));
       rowsReturned += num;
       columnarBatch.setNumRows(num);
       numBatched = num;
@@ -343,7 +351,11 @@ public class VectorizedOapRecordReader extends SpecificOapRecordReaderBase<Objec
     }
 
     protected void readNextRowGroup() throws IOException {
+      long start = System.nanoTime();
       PageReadStore pages = reader.readNextRowGroup();
+      long end = System.nanoTime();
+      long time = end - start;
+      logger.warn("read row group with cols = {}, time = {}", columnarBatch.numCols(), time);
       initColumnReaders(pages);
     }
 
