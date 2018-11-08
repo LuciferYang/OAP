@@ -148,7 +148,6 @@ public class ParquetFiberDataReader implements Closeable {
       DataFiberDescriptor descriptor) throws IOException {
     f.seek(descriptor.fileOffset);
     byte[] chunksBytes = new byte[descriptor.size];
-    //    LOG.warn("column {} read length {}", descriptor.metadata.getPath(), chunksBytes.length );
     f.readFully(chunksBytes);
     if (LOG.isDebugEnabled()) {
       LOG.debug("read binary data of {}  {} offset = {}, length = {} ",
