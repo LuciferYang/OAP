@@ -215,7 +215,7 @@ private[sql] class DataFileMetaCacheManager extends Logging {
       .build[ENTRY, DataFileMeta](new CacheLoader[ENTRY, DataFileMeta]() {
         override def load(entry: ENTRY)
         : DataFileMeta = {
-          logWarning(s"Loading Data File Meta ${entry.path}")
+          logDebug(s"Loading Data File Meta ${entry.path}")
           val meta = entry.getDataFileMeta()
           _cacheSize.addAndGet(meta.len)
           meta
