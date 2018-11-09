@@ -21,7 +21,7 @@ import org.apache.spark.sql.execution.datasources.oap.io.DataFile
 
 private[oap] abstract class FiberId {}
 
-case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
+private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
     FiberId {
 
   override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
