@@ -20,14 +20,15 @@ package org.apache.spark.sql.execution.datasources.oap.filecache
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
+import com.google.common.primitives.Ints
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.datasources.OapException
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.unsafe.Platform
-import org.apache.spark.unsafe.memory.MemoryBlock
 import org.apache.spark.unsafe.types.UTF8String
 
-case class FiberCache(protected val fiberData: MemoryBlock) extends Logging {
+case class FiberCache(protected val fiberData: MemoryBlockHolder) extends Logging {
 
   // This is and only is set in `cache() of OapCache`
   // TODO: make it immutable
@@ -97,7 +98,8 @@ case class FiberCache(protected val fiberData: MemoryBlock) extends Logging {
   // For debugging
   def toArray: Array[Byte] = {
     // TODO: Handle overflow
-    val bytes = new Array[Byte](fiberData.size().toInt)
+    val intSize = Ints.checkedCast(size())
+    val bytes = new Array[Byte](intSize)
     copyMemoryToBytes(0, bytes)
     bytes
   }
@@ -108,9 +110,9 @@ case class FiberCache(protected val fiberData: MemoryBlock) extends Logging {
     if (disposed) {
       throw new OapException("Try to access a freed memory")
     }
-    fiberData.getBaseObject
+    fiberData.baseObject
   }
-  def getBaseOffset: Long = fiberData.getBaseOffset
+  def getBaseOffset: Long = fiberData.baseOffset
 
   def getBoolean(offset: Long): Boolean = Platform.getBoolean(getBaseObj, getBaseOffset + offset)
 
@@ -140,13 +142,18 @@ case class FiberCache(protected val fiberData: MemoryBlock) extends Logging {
       getBaseObj, getBaseOffset + offset, dst, Platform.BYTE_ARRAY_OFFSET, dst.length)
   }
 
-  def size(): Long = fiberData.size()
+  def size(): Long = fiberData.length
+
+  // Return the occupied size and it's typically larger than the required data size due to memory
+  // alignments from underlying allocator
+  def getOccupiedSize(): Long = fiberData.occupiedSize
 }
 
 object FiberCache {
   //  For test purpose :convert Array[Byte] to FiberCache
   private[oap] def apply(data: Array[Byte]): FiberCache = {
-    val memoryBlock = new MemoryBlock(data, Platform.BYTE_ARRAY_OFFSET, data.length)
-    FiberCache(memoryBlock)
+    val memoryBlockHolder =
+      MemoryBlockHolder(data, Platform.BYTE_ARRAY_OFFSET, data.length, data.length)
+    FiberCache(memoryBlockHolder)
   }
 }

@@ -20,12 +20,15 @@ package org.apache.spark.sql.execution.datasources.oap.filecache
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
-import scala.util.Random
+import scala.collection.mutable.ArrayBuffer
 
 import com.google.common.base.Throwables
 
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberSensor.HostFiberCache
 import org.apache.spark.sql.execution.datasources.oap.utils.CacheStatusSerDe
+import org.apache.spark.sql.internal.oap.OapConf
+import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.oap.listener.SparkListenerCustomInfoUpdate
 import org.apache.spark.util.collection.BitSet
 
@@ -43,21 +46,26 @@ private[oap] case class FiberCacheStatus(
 // (for cache locality) and metrics info
 private[sql] class FiberSensor extends Logging {
 
-  private case class HostFiberCache(host: String, status: FiberCacheStatus)
+  private[filecache] val fileToHosts = new ConcurrentHashMap[String, ArrayBuffer[HostFiberCache]]
 
-  private val fileToHosts = new ConcurrentHashMap[String, Seq[HostFiberCache]]
-
-  private def updateRecordingMap(fromHost: String, commingStatus: FiberCacheStatus) = synchronized {
-    val currentHostsForFile = fileToHosts.getOrDefault(commingStatus.file, Seq.empty)
+  private[filecache] def updateRecordingMap(fromHost: String, commingStatus: FiberCacheStatus) =
+    synchronized {
+    val currentHostsForFile = fileToHosts.getOrDefault(
+      commingStatus.file, new ArrayBuffer[HostFiberCache](0))
     val (_, theRest) = currentHostsForFile.partition(_.host == fromHost)
-    val newHostsForFile = theRest :+ HostFiberCache(fromHost, commingStatus)
+    val newHostsForFile = (HostFiberCache(fromHost, commingStatus) +: theRest)
+      .sorted.takeRight(FiberSensor.MAX_HOSTS_MAINTAINED)
     fileToHosts.put(commingStatus.file, newHostsForFile)
   }
 
-  private def discardOutdatedInfo(host: String) = synchronized {
-    for ((k: String, v: Seq[HostFiberCache]) <- fileToHosts.asScala) {
+  private[filecache] def discardOutdatedInfo(host: String) = synchronized {
+    for ((k: String, v: ArrayBuffer[HostFiberCache]) <- fileToHosts.asScala) {
       val(_, kept) = v.partition(_.host == host)
-      fileToHosts.put(k, kept)
+      if (kept.size == 0) {
+        fileToHosts.remove(k)
+      } else {
+        fileToHosts.put(k, kept)
+      }
     }
   }
 
@@ -70,7 +78,7 @@ private[sql] class FiberSensor extends Logging {
     logDebug(s"Got updated fiber info from host: $updateHostName, executorId: $updateExecId," +
       s"host is $host, info array len is ${fiberCacheStatus.size}")
     // Coming information of a certain executor requires discarding previous records so as to
-    // reflect Fibers' eviction
+    // reflect Fiber eviction
     discardOutdatedInfo(host)
     fiberCacheStatus.foreach(updateRecordingMap(host, _))
   }
@@ -93,6 +101,10 @@ private[sql] class FiberSensor extends Logging {
     }
   }
 
+  def getExecutorToCacheManager(): ConcurrentHashMap[String, CacheStats] = {
+    executorToCacheManager
+  }
+
   /**
    * get hosts that has fiber cached for fiber file.
    * Current implementation only returns one host, but still using API name with [[getHosts]]
@@ -100,17 +112,28 @@ private[sql] class FiberSensor extends Logging {
    * @return
    */
   def getHosts(filePath: String): Seq[String] = {
-    // From max to min
-    val sorted = fileToHosts.getOrDefault(filePath, Seq.empty).map(
-      hostAndInfo => (hostAndInfo.host, hostAndInfo.status.cachedFiberCount)).sortBy((_._2 * -1))
-    val ret = Random.shuffle(sorted.take(FiberSensor.NUM_GET_HOSTS).map(_._1))
-//    logWarning(s"getHosts: ${ret.toString()}")
-    ret
+    fileToHosts.getOrDefault(filePath, new ArrayBuffer[HostFiberCache](0))
+      .sorted.takeRight(FiberSensor.NUM_GET_HOSTS).reverse.map(_.host)
   }
 }
 
 private[sql] object FiberSensor {
-  val NUM_GET_HOSTS = 3
+
+  case class HostFiberCache(host: String, status: FiberCacheStatus)
+      extends Ordered[HostFiberCache] {
+    override def compare(another: HostFiberCache): Int = {
+      status.cachedFiberCount - another.status.cachedFiberCount
+    }
+  }
+
+  private def conf = OapRuntime.getOrCreate.sparkSession.conf
+
+  val NUM_GET_HOSTS = conf.get(
+    OapConf.OAP_CACHE_FIBERSENSOR_GETHOSTS_NUM,
+    OapConf.OAP_CACHE_FIBERSENSOR_GETHOSTS_NUM.defaultValue.get)
+  val MAX_HOSTS_MAINTAINED = conf.get(
+    OapConf.OAP_CACHE_FIBERSENSOR_MAXHOSTSMAINTAINED_NUM,
+    OapConf.OAP_CACHE_FIBERSENSOR_MAXHOSTSMAINTAINED_NUM.defaultValue.get)
   val OAP_CACHE_HOST_PREFIX = "OAP_HOST_"
   val OAP_CACHE_EXECUTOR_PREFIX = "_OAP_EXECUTOR_"
 }

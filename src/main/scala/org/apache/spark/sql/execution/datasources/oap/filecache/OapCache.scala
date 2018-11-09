@@ -143,8 +143,10 @@ class GuavaOapCache(cacheMemory: Long, cacheGuardianMemory: Long, cacheUsedPerce
   }
 
   private val weigher = new Weigher[FiberId, FiberCache] {
-    override def weigh(key: FiberId, value: FiberCache): Int =
-      math.ceil(value.size() / KB).toInt
+    override def weigh(key: FiberId, value: FiberCache): Int = {
+      // We should calculate the weigh with the occupied size of the block.
+      math.ceil(value.getOccupiedSize() / KB).toInt
+    }
   }
 
   private val dataCacheInstance = CacheBuilder.newBuilder()
