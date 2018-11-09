@@ -37,7 +37,6 @@ import org.apache.spark.sql.types.StructType;
 
 public class VectorizedOapRecordReader extends SpecificOapRecordReaderBase<Object> {
 
-
     /**
      * Batch of rows that we assemble and the current index we've returned. Every time this
      * batch is used up (batchIdx == numBatched), we populated the batch.
