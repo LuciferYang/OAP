@@ -24,7 +24,6 @@ import org.apache.hadoop.fs.FileSystem
 
 import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources.oap.{IndexType, OapFileFormat}
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.{OapDriverRuntime, OapRuntime}
 import org.apache.spark.sql.test.{SharedSQLContext, TestOapLocalClusterSession, TestOapSession, TestSparkSession}
@@ -127,6 +126,22 @@ trait SharedOapContextBase extends SharedSQLContext {
     } finally {
       if (fs != null) {
         fs.close()
+      }
+    }
+  }
+
+  /**
+   * Sets all Hadoop configurations specified in `pairs`, calls `f`, and then restore all Hadoop
+   * configurations.
+   */
+  protected def withHadoopConf(pairs: (String, String)*)(f: => Unit): Unit = {
+    val (keys, values) = pairs.unzip
+    val currentValues = keys.map(key => Option(configuration.get(key)))
+    (keys, values).zipped.foreach(configuration.set)
+    try f finally {
+      keys.zip(currentValues).foreach {
+        case (key, Some(value)) => configuration.set(key, value)
+        case (key, None) => configuration.unset(key)
       }
     }
   }

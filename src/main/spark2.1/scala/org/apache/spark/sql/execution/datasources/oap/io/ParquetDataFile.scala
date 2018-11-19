@@ -114,17 +114,14 @@ private[oap] case class ParquetDataFile(
         // and rollback to read this rowgroup from file directly.
         if (parquetDataCacheEnable &&
           !meta.footer.getBlocks.asScala.exists(_.getRowCount > Int.MaxValue)) {
-          addRequestSchemaToConf(configuration, requiredIds)
           initCacheReader(requiredIds, c,
             new VectorizedCacheReader(configuration,
               meta.footer.toParquetMetadata(), this, requiredIds))
         } else {
-          addRequestSchemaToConf(configuration, requiredIds)
           initVectorizedReader(c,
             new VectorizedOapRecordReader(file, configuration, meta.footer))
         }
       case _ =>
-        addRequestSchemaToConf(configuration, requiredIds)
         initRecordReader(
           new MrOapRecordReader[UnsafeRow](new ParquetReadSupportWrapper,
             file, configuration, meta.footer))
@@ -146,18 +143,15 @@ private[oap] case class ParquetDataFile(
           // and rollback to read this rowgroup from file directly.
           if (parquetDataCacheEnable &&
             !meta.footer.getBlocks.asScala.exists(_.getRowCount > Int.MaxValue)) {
-            addRequestSchemaToConf(configuration, requiredIds)
             initCacheReader(requiredIds, c,
               new IndexedVectorizedCacheReader(configuration,
                 meta.footer.toParquetMetadata(rowIds), this, requiredIds))
           } else {
-            addRequestSchemaToConf(configuration, requiredIds)
             initVectorizedReader(c,
               new IndexedVectorizedOapRecordReader(file,
                 configuration, meta.footer, rowIds))
           }
         case _ =>
-          addRequestSchemaToConf(configuration, requiredIds)
           initRecordReader(
             new IndexedMrOapRecordReader[UnsafeRow](new ParquetReadSupportWrapper,
               file, configuration, rowIds, meta.footer))

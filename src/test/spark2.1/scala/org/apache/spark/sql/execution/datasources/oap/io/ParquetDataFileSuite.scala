@@ -21,7 +21,6 @@ import java.io.{File, IOException}
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.column.ColumnDescriptor
 import org.apache.parquet.column.ParquetProperties.WriterVersion
@@ -41,8 +40,7 @@ import org.apache.spark.SparkFunSuite
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
-import org.apache.spark.sql.execution.datasources.parquet.{ParquetReadSupportWrapper, SkippableVectorizedColumnReader}
+import org.apache.spark.sql.execution.datasources.parquet._
 import org.apache.spark.sql.execution.vectorized.{ColumnarBatch, ColumnVector}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.oap.OapConf
@@ -65,6 +63,8 @@ abstract class ParquetDataFileSuite extends SparkFunSuite with SharedOapContext
 
   protected def dataVersion: WriterVersion
 
+  protected def dataSchema: StructType
+
   override def beforeEach(): Unit = {
     configuration.setBoolean(SQLConf.PARQUET_BINARY_AS_STRING.key,
       SQLConf.PARQUET_BINARY_AS_STRING.defaultValue.get)
@@ -72,8 +72,6 @@ abstract class ParquetDataFileSuite extends SparkFunSuite with SharedOapContext
       SQLConf.PARQUET_INT96_AS_TIMESTAMP.defaultValue.get)
     configuration.setBoolean(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key,
       SQLConf.PARQUET_WRITE_LEGACY_FORMAT.defaultValue.get)
-    // SQLConf.PARQUET_INT64_AS_TIMESTAMP_MILLIS is defined in Spark 2.2 and later
-    configuration.setBoolean("spark.sql.parquet.int64AsTimestampMillis", false)
     prepareData()
   }
 
@@ -81,7 +79,6 @@ abstract class ParquetDataFileSuite extends SparkFunSuite with SharedOapContext
     configuration.unset(SQLConf.PARQUET_BINARY_AS_STRING.key)
     configuration.unset(SQLConf.PARQUET_INT96_AS_TIMESTAMP.key)
     configuration.unset(SQLConf.PARQUET_WRITE_LEGACY_FORMAT.key)
-    configuration.unset("spark.sql.parquet.int64AsTimestampMillis")
     cleanDir()
   }
 
@@ -112,15 +109,24 @@ abstract class ParquetDataFileSuite extends SparkFunSuite with SharedOapContext
       fs.delete(path.getParent, true)
     }
   }
+
+  protected def requestSchemaString(requiredIds: Array[Int]): String = {
+    var requestSchema = new StructType
+    for (index <- requiredIds) {
+      requestSchema = requestSchema.add(dataSchema(index))
+    }
+    requestSchema.json
+  }
 }
 
 class SimpleDataSuite extends ParquetDataFileSuite {
 
-  private val requestSchema: StructType = new StructType()
+  override def dataSchema: StructType = new StructType()
     .add(StructField("int32_field", IntegerType))
     .add(StructField("int64_field", LongType))
     .add(StructField("boolean_field", BooleanType))
     .add(StructField("float_field", FloatType))
+    .add(StructField("double_field", DoubleType))
 
   override def parquetSchema: MessageType = new MessageType("test",
     new PrimitiveType(REQUIRED, INT32, "int32_field"),
@@ -143,58 +149,68 @@ class SimpleDataSuite extends ParquetDataFileSuite {
   }
 
   test("read by columnIds and rowIds") {
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0, 1)
-    val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382)
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-      .asInstanceOf[OapCompletionIterator[InternalRow]]
-    val result = ArrayBuffer[Int]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      assert(row.numFields == 2)
-      result += row.getInt(0)
-    }
-    iterator.close()
-    assert(rowIds.length == result.length)
-    for (i <- rowIds.indices) {
-      assert(rowIds(i) == result(i))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      val requiredIds = Array(0, 1)
+      val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382)
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        .asInstanceOf[OapCompletionIterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        assert(row.numFields == 2)
+        result += row.getInt(0)
+      }
+      iterator.close()
+      assert(rowIds.length == result.length)
+      for (i <- rowIds.indices) {
+        assert(rowIds(i) == result(i))
+      }
     }
   }
 
   test("read by columnIds and empty rowIds array") {
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0, 1)
-    val rowIds = Array.emptyIntArray
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-      .asInstanceOf[OapCompletionIterator[InternalRow]]
-    assert(!iterator.hasNext)
-    val e = intercept[java.util.NoSuchElementException] {
-      iterator.next()
-    }.getMessage
-    iterator.close()
-    assert(e.contains("next on empty iterator"))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      val rowIds = Array.emptyIntArray
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        .asInstanceOf[OapCompletionIterator[InternalRow]]
+      assert(!iterator.hasNext)
+      val e = intercept[java.util.NoSuchElementException] {
+        iterator.next()
+      }.getMessage
+      iterator.close()
+      assert(e.contains("next on empty iterator"))
+    }
   }
 
   test("read by columnIds ") {
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
     val requiredIds = Array(0)
-    val iterator = reader.iterator(requiredIds)
-      .asInstanceOf[OapCompletionIterator[InternalRow]]
-    val result = ArrayBuffer[ Int ]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      result += row.getInt(0)
-    }
-    iterator.close()
-    val length = data.length
-    assert(length == result.length)
-    for (i <- 0 until length) {
-      assert(i == result(i))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      val iterator = reader.iterator(requiredIds)
+        .asInstanceOf[OapCompletionIterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        result += row.getInt(0)
+      }
+      iterator.close()
+      val length = data.length
+      assert(length == result.length)
+      for (i <- 0 until length) {
+        assert(i == result(i))
+      }
     }
   }
 
   test("getDataFileMeta") {
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
+    val reader = ParquetDataFile(fileName, dataSchema, configuration)
     val meta = reader.getDataFileMeta()
     val footer = meta.footer
     assert(footer.getFileMetaData != null)
@@ -207,7 +223,7 @@ class SimpleDataSuite extends ParquetDataFileSuite {
 
 class NestedDataSuite extends ParquetDataFileSuite {
 
-  private val requestStructType: StructType = new StructType()
+  override def dataSchema: StructType = new StructType()
     .add(StructField("DocId", LongType))
     .add("Links", new StructType()
       .add(StructField("Backward", ArrayType(LongType)))
@@ -259,45 +275,52 @@ class NestedDataSuite extends ParquetDataFileSuite {
   }
 
   test("skip read record 1") {
-    val reader = ParquetDataFile(fileName, requestStructType, configuration)
     val requiredIds = Array(0, 1, 2)
-    val rowIds = Array(1)
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-      .asInstanceOf[OapCompletionIterator[InternalRow]]
-    assert(iterator.hasNext)
-    val row = iterator.next()
-    assert(row.numFields == 3)
-    val docId = row.getLong(0)
-    assert(docId == 20L)
-    iterator.close()
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      val rowIds = Array(1)
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        .asInstanceOf[OapCompletionIterator[InternalRow]]
+      assert(iterator.hasNext)
+      val row = iterator.next()
+      assert(row.numFields == 3)
+      val docId = row.getLong(0)
+      assert(docId == 20L)
+      iterator.close()
+    }
   }
 
   test("read all ") {
-    val reader = ParquetDataFile(fileName, requestStructType, configuration)
     val requiredIds = Array(0, 2)
-    val iterator = reader.iterator(requiredIds)
-      .asInstanceOf[OapCompletionIterator[InternalRow]]
-    assert(iterator.hasNext)
-    val rowOne = iterator.next()
-    assert(rowOne.numFields == 2)
-    val docIdOne = rowOne.getLong(0)
-    assert(docIdOne == 10L)
-    assert(iterator.hasNext)
-    val rowTwo = iterator.next()
-    assert(rowTwo.numFields == 2)
-    val docIdTwo = rowTwo.getLong(0)
-    assert(docIdTwo == 20L)
-    iterator.close()
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      val iterator = reader.iterator(requiredIds)
+        .asInstanceOf[OapCompletionIterator[InternalRow]]
+      assert(iterator.hasNext)
+      val rowOne = iterator.next()
+      assert(rowOne.numFields == 2)
+      val docIdOne = rowOne.getLong(0)
+      assert(docIdOne == 10L)
+      assert(iterator.hasNext)
+      val rowTwo = iterator.next()
+      assert(rowTwo.numFields == 2)
+      val docIdTwo = rowTwo.getLong(0)
+      assert(docIdTwo == 20L)
+      iterator.close()
+    }
   }
 }
 
 class VectorizedDataSuite extends ParquetDataFileSuite {
 
-  private val requestSchema: StructType = new StructType()
+  override def dataSchema: StructType = new StructType()
     .add(StructField("int32_field", IntegerType))
     .add(StructField("int64_field", LongType))
     .add(StructField("boolean_field", BooleanType))
     .add(StructField("float_field", FloatType))
+    .add(StructField("double_field", DoubleType))
 
   override def parquetSchema: MessageType = new MessageType("test",
     new PrimitiveType(REQUIRED, INT32, "int32_field"),
@@ -320,127 +343,146 @@ class VectorizedDataSuite extends ParquetDataFileSuite {
   }
 
   test("read by columnIds and rowIds disable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0, 1)
-    val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 1134, 1753, 2222, 3928, 4200, 4734)
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-      .asInstanceOf[Iterator[InternalRow]]
-    val result = ArrayBuffer[Int]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      assert(row.numFields == 2)
-      result += row.getInt(0)
-    }
-    assert(rowIds.length == result.length)
-    for (i <- rowIds.indices) {
-      assert(rowIds(i) == result(i))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 1134, 1753, 2222, 3928, 4200, 4734)
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        .asInstanceOf[Iterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        assert(row.numFields == 2)
+        result += row.getInt(0)
+      }
+      assert(rowIds.length == result.length)
+      for (i <- rowIds.indices) {
+        assert(rowIds(i) == result(i))
+      }
     }
   }
 
   test("read by columnIds and rowIds enable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0, 1)
-    // RowGroup0 => page0: [0, 1, 7, 8, 120, 121, 381, 382]
-    // RowGroup0 => page5: [23000]
-    // RowGroup2 => page0: [50752]
-    val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 23000, 50752)
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-    val result = ArrayBuffer[Int]()
-    while (iterator.hasNext) {
-      val batch = iterator.next().asInstanceOf[ColumnarBatch]
-      val rowIterator = batch.rowIterator()
-      while (rowIterator.hasNext) {
-        val row = rowIterator.next()
-        assert(row.numFields == 2)
-        result += row.getInt(0)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      // RowGroup0 => page0: [0, 1, 7, 8, 120, 121, 381, 382]
+      // RowGroup0 => page5: [23000]
+      // RowGroup2 => page0: [50752]
+      val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 23000, 50752)
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val batch = iterator.next().asInstanceOf[ColumnarBatch]
+        val rowIterator = batch.rowIterator()
+        while (rowIterator.hasNext) {
+          val row = rowIterator.next()
+          assert(row.numFields == 2)
+          result += row.getInt(0)
+        }
       }
-    }
-    for (i <- rowIds.indices) {
-      assert(result.contains(i))
+      for (i <- rowIds.indices) {
+        assert(result.contains(i))
+      }
     }
   }
 
   test("read by columnIds and empty rowIds array disable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0, 1)
-    val rowIds = Array.emptyIntArray
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-    assert(!iterator.hasNext)
-    val e = intercept[java.util.NoSuchElementException] {
-      iterator.next()
-    }.getMessage
-    assert(e.contains("next on empty iterator"))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val rowIds = Array.emptyIntArray
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+      assert(!iterator.hasNext)
+      val e = intercept[java.util.NoSuchElementException] {
+        iterator.next()
+      }.getMessage
+      assert(e.contains("next on empty iterator"))
+    }
   }
 
   test("read by columnIds and empty rowIds array enable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0, 1)
-    val rowIds = Array.emptyIntArray
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-    assert(!iterator.hasNext)
-    val e = intercept[java.util.NoSuchElementException] {
-      iterator.next()
-    }.getMessage
-    assert(e.contains("next on empty iterator"))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val rowIds = Array.emptyIntArray
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+      assert(!iterator.hasNext)
+      val e = intercept[java.util.NoSuchElementException] {
+        iterator.next()
+      }.getMessage
+      assert(e.contains("next on empty iterator"))
+    }
   }
 
   test("read by columnIds disable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0)
-    val iterator = reader.iterator(requiredIds)
-      .asInstanceOf[Iterator[InternalRow]]
-    val result = ArrayBuffer[ Int ]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      result += row.getInt(0)
-    }
-    val length = data.length
-    assert(length == result.length)
-    for (i <- 0 until length) {
-      assert(i == result(i))
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val iterator = reader.iterator(requiredIds)
+        .asInstanceOf[Iterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        result += row.getInt(0)
+      }
+      val length = data.length
+      assert(length == result.length)
+      for (i <- 0 until length) {
+        assert(i == result(i))
+      }
     }
   }
 
   test("read by columnIds enable returningBatch") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0)
-    val iterator = reader.iterator(requiredIds)
-    val result = ArrayBuffer[ Int ]()
-    while (iterator.hasNext) {
-      val batch = iterator.next().asInstanceOf[ColumnarBatch]
-      val batchIter = batch.rowIterator()
-      while (batchIter.hasNext) {
-        val row = batchIter.next
-        result += row.getInt(0)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = true))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val iterator = reader.iterator(requiredIds)
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val batch = iterator.next().asInstanceOf[ColumnarBatch]
+        val batchIter = batch.rowIterator()
+        while (batchIter.hasNext) {
+          val row = batchIter.next
+          result += row.getInt(0)
+        }
       }
-    }
-    val length = data.length
-    assert(length == result.length)
-    for (i <- 0 until length) {
-      assert(i == result(i))
+      val length = data.length
+      assert(length == result.length)
+      for (i <- 0 until length) {
+        assert(i == result(i))
+      }
     }
   }
 }
 
 class ParquetCacheDataSuite extends ParquetDataFileSuite {
 
-  private val requestSchema: StructType = new StructType()
+  protected def dataSchema: StructType = new StructType()
     .add(StructField("int32_field", IntegerType))
     .add(StructField("int64_field", LongType))
     .add(StructField("boolean_field", BooleanType))
     .add(StructField("float_field", FloatType))
+    .add(StructField("double_field", DoubleType))
 
   override def parquetSchema: MessageType = new MessageType("test",
     new PrimitiveType(REQUIRED, INT32, "int32_field"),
@@ -474,48 +516,58 @@ class ParquetCacheDataSuite extends ParquetDataFileSuite {
   }
 
   test("read by columnIds and rowIds in fiberCache") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0, 1)
-    val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 1134, 1753, 2222, 3928, 4200, 4734)
-    val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
-      .asInstanceOf[Iterator[InternalRow]]
-    val result = ArrayBuffer[Int]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      assert(row.numFields == 2)
-      result += row.getInt(0)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val rowIds = Array(0, 1, 7, 8, 120, 121, 381, 382, 1134, 1753, 2222, 3928, 4200, 4734)
+      val iterator = reader.iteratorWithRowIds(requiredIds, rowIds)
+        .asInstanceOf[Iterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        assert(row.numFields == 2)
+        result += row.getInt(0)
+      }
+      assert(rowIds.length == result.length, "Expected result length does not match.")
+      for (i <- rowIds.indices) {
+        assert(rowIds(i) == result(i))
+      }
+      assert(OapRuntime.getOrCreate.fiberCacheManager.cacheCount == 2,
+        "Cache count does not match.")
     }
-    assert(rowIds.length == result.length, "Expected result length does not match.")
-    for (i <- rowIds.indices) {
-      assert(rowIds(i) == result(i))
-    }
-    assert(OapRuntime.getOrCreate.fiberCacheManager.cacheCount == 2, "Cache count does not match.")
   }
 
   test("read by columnIds in fiberCache") {
-    val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
-    val reader = ParquetDataFile(fileName, requestSchema, configuration)
-    reader.setParquetVectorizedContext(context)
     val requiredIds = Array(0)
-    val iterator = reader.iterator(requiredIds)
-      .asInstanceOf[Iterator[InternalRow]]
-    val result = ArrayBuffer[Int]()
-    while (iterator.hasNext) {
-      val row = iterator.next()
-      result += row.getInt(0)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val context = Some(ParquetVectorizedContext(null, null, returningBatch = false))
+      val reader = ParquetDataFile(fileName, dataSchema, configuration)
+      reader.setParquetVectorizedContext(context)
+      val iterator = reader.iterator(requiredIds)
+        .asInstanceOf[Iterator[InternalRow]]
+      val result = ArrayBuffer[Int]()
+      while (iterator.hasNext) {
+        val row = iterator.next()
+        result += row.getInt(0)
+      }
+      val length = data.length
+      assert(length == result.length, "Expected result length does not match.")
+      for (i <- 0 until length) {
+        assert(i == result(i))
+      }
+      assert(OapRuntime.getOrCreate.fiberCacheManager.cacheCount == 4,
+        "Cache count does not match.")
     }
-    val length = data.length
-    assert(length == result.length, "Expected result length does not match.")
-    for (i <- 0 until length) {
-      assert(i == result(i))
-    }
-    assert(OapRuntime.getOrCreate.fiberCacheManager.cacheCount == 4, "Cache count does not match.")
   }
 }
 
 class ParquetFiberDataReaderSuite extends ParquetDataFileSuite {
+
+  override protected def dataSchema: StructType = throw new UnsupportedOperationException
 
   override def parquetSchema: MessageType = new MessageType("test",
     new PrimitiveType(REQUIRED, INT32, "int32_field"),
@@ -560,8 +612,6 @@ class ParquetFiberDataReaderSuite extends ParquetDataFileSuite {
     val reader = ParquetFiberDataReader.open(configuration,
       new Path(fileName), meta.footer.toParquetMetadata)
     val footer = reader.getFooter
-    val rowCount = footer.getBlocks.get(0).getRowCount.toInt
-    val vector = ColumnVector.allocate(rowCount, IntegerType, MemoryMode.ON_HEAP)
     val blockMetaData = footer.getBlocks.get(0)
     val columnDescriptor = new ColumnDescriptor(Array(s"${fileName}_temp"), INT32, 0, 0)
     val exception = intercept[IOException] {
@@ -573,7 +623,7 @@ class ParquetFiberDataReaderSuite extends ParquetDataFileSuite {
 
 class ParquetFiberDataLoaderSuite extends ParquetDataFileSuite {
 
-  private val requestSchema: StructType = new StructType()
+  protected def dataSchema: StructType = new StructType()
     .add(StructField("int32_field", IntegerType))
     .add(StructField("int64_field", LongType))
     .add(StructField("boolean_field", BooleanType))
@@ -613,44 +663,40 @@ class ParquetFiberDataLoaderSuite extends ParquetDataFileSuite {
     super.afterEach()
   }
 
-  private def addRequestSchemaToConf(conf: Configuration, requiredIds: Array[Int]): Unit = {
-    val requestSchemaString = {
-      var schema = new StructType
-      for (index <- requiredIds) {
-        schema = schema.add(requestSchema(index))
-      }
-      schema.json
-    }
-    conf.set(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA, requestSchemaString)
-  }
-
-  private def loadSingleColumn(requiredId: Array[Int]): FiberCache = {
-    val conf = new Configuration(configuration)
-    addRequestSchemaToConf(conf, requiredId)
-    ParquetFiberDataLoader(conf, reader, 0).loadSingleColumn
-  }
-
   test("test loadSingleColumn with reuse reader") {
-    // fixed length data type
     val rowCount = reader.getFooter.getBlocks.get(0).getRowCount.toInt
-    val intFiberCache = loadSingleColumn(Array(0))
     val statusOffset = 6
-    (0 until rowCount).foreach(i => assert(intFiberCache.getInt(statusOffset + i * 4) == i))
-    // variable length data type
-    val strFiberCache = loadSingleColumn(Array(4))
-    (0 until rowCount).foreach { i =>
-      val length = strFiberCache.getInt(statusOffset + i * 4)
-      val offset = strFiberCache.getInt(statusOffset + rowCount * 4 + i * 4)
-      assert(strFiberCache.getUTF8String(statusOffset + rowCount * 8 + offset, length).
-        equals(UTF8String.fromString(s"str$i")))
+    val requiredIds0 = Array(0)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds0)) {
+      // fixed length data type
+      val intFiberCache = ParquetFiberDataLoader(configuration, reader, 0).loadSingleColumn
+      (0 until rowCount).foreach(i => assert(intFiberCache.getInt(statusOffset + i * 4) == i))
+    }
+
+    val requiredIds4 = Array(4)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds4)) {
+      // variable length data type
+      val strFiberCache = ParquetFiberDataLoader(configuration, reader, 0).loadSingleColumn
+      (0 until rowCount).foreach { i =>
+        val length = strFiberCache.getInt(statusOffset + i * 4)
+        val offset = strFiberCache.getInt(statusOffset + rowCount * 4 + i * 4)
+        assert(strFiberCache.getUTF8String(statusOffset + rowCount * 8 + offset, length).
+          equals(UTF8String.fromString(s"str$i")))
+      }
     }
   }
 
   test("test load multi-columns every time") {
-    val exception = intercept[AssertionError] {
-      loadSingleColumn(Array(0, 1))
+    val requiredIds = Array(0, 1)
+    withHadoopConf(ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA
+      -> requestSchemaString(requiredIds)) {
+      val exception = intercept[AssertionError] {
+        ParquetFiberDataLoader(configuration, reader, 0).loadSingleColumn
+      }
+      assert(exception.getMessage.contains("Only can get single column every time"))
     }
-    assert(exception.getMessage.contains("Only can get single column every time"))
   }
 }
 
