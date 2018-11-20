@@ -217,13 +217,12 @@ class GuavaOapCache(cacheMemory: Long, cacheGuardianMemory: Long,
     dataCacheInstance.asMap().keySet().asScala.toSet ++
       indexCacheInstance.asMap().keySet().asScala.toSet
 
-  override def invalidate(fiber: FiberId): Unit = {
+  override def invalidate(fiber: FiberId): Unit =
     if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[TestFiberId]) {
       dataCacheInstance.invalidate(fiber)
     } else if (fiber.isInstanceOf[BTreeFiberId] || fiber.isInstanceOf[BitmapFiberId]) {
       indexCacheInstance.invalidate(fiber)
     }
-  }
 
   override def invalidateAll(fibers: Iterable[FiberId]): Unit = {
     fibers.foreach(invalidate)
