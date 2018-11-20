@@ -188,12 +188,12 @@ class GuavaOapCache(cacheMemory: Long, cacheGuardianMemory: Long,
     val readLock = OapRuntime.getOrCreate.fiberLockManager.getFiberLock(fiber).readLock()
     readLock.lock()
     try {
-      var fiberCache: FiberCache = null
-      if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[TestFiberId]) {
-        fiberCache = dataCacheInstance.get(fiber)
-      } else if (fiber.isInstanceOf[BTreeFiberId] || fiber.isInstanceOf[BitmapFiberId]) {
-        fiberCache = indexCacheInstance.get(fiber)
-      }
+      val fiberCache: FiberCache =
+        if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[TestFiberId]) {
+          dataCacheInstance.get(fiber)
+        } else if (fiber.isInstanceOf[BTreeFiberId] || fiber.isInstanceOf[BitmapFiberId]) {
+          indexCacheInstance.get(fiber)
+        } else throw new OapException(s"not support fiber type $fiber")
       // Avoid loading a fiber larger than MAX_WEIGHT / CONCURRENCY_LEVEL
       assert(fiberCache.size() <= MAX_WEIGHT * KB / CONCURRENCY_LEVEL,
         s"Failed to cache fiber(${Utils.bytesToString(fiberCache.size())}) " +
