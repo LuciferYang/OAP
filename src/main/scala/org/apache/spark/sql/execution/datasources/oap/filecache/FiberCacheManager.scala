@@ -22,12 +22,13 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
 import com.google.common.cache._
-
 import org.apache.spark.SparkEnv
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.datasources.OapException
 import org.apache.spark.sql.execution.datasources.oap.io._
 import org.apache.spark.sql.execution.datasources.oap.utils.CacheStatusSerDe
+import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.util.Utils
 import org.apache.spark.util.collection.BitSet
@@ -104,7 +105,8 @@ private[sql] class FiberCacheManager(
     val cacheName = sparkEnv.conf.get("spark.oap.cache.strategy", DEFAULT_CACHE_STRATEGY)
     if (cacheName.equals(GUAVA_CACHE)) {
       new GuavaOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory,
-        sparkEnv.conf.getDouble("spark.oap.data.cache.used.percent", 0.8))
+        sparkEnv.conf.getDouble(OapConf.OAP_FIBERCACHE_USE_OFFHEAP_RATIO.key, OapConf
+          .OAP_FIBERCACHE_USE_OFFHEAP_RATIO.defaultValue.get))
     } else if (cacheName.equals(SIMPLE_CACHE)) {
       new SimpleOapCache()
     } else {
