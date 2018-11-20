@@ -126,10 +126,6 @@ private[sql] class FiberCacheManager(
     cacheBackend.get(fiber)
   }
 
-  def exists(fiber: FiberId): Boolean = {
-    cacheBackend.exists(fiber)
-  }
-
   def releaseIndexCache(indexName: String): Unit = {
     logDebug(s"Going to remove all index cache of $indexName")
     val fiberToBeRemoved = cacheBackend.getFibers.filter {

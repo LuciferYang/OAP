@@ -262,7 +262,7 @@ class FiberCacheManagerSuite extends SharedOapContext {
     }
     def removeWork(): Unit = {
       (1 to 100000).foreach { _ =>
-        fiberCacheManager.releaseFiber(fiber)
+          fiberCacheManager.releaseFiber(fiber)
       }
     }
     val result = pool.submit(new TestCaller(occupyWork))
