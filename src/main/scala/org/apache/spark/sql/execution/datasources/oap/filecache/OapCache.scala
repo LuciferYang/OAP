@@ -206,20 +206,16 @@ class GuavaOapCache(cacheMemory: Long, cacheGuardianMemory: Long,
     }
   }
 
-  override def getIfPresent(fiber: FiberId): FiberCache = {
-    var fiberCache: FiberCache = null
+  override def getIfPresent(fiber: FiberId): FiberCache =
     if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[TestFiberId]) {
-      fiberCache = dataCacheInstance.get(fiber)
+      dataCacheInstance.getIfPresent(fiber)
     } else if (fiber.isInstanceOf[BTreeFiberId] || fiber.isInstanceOf[BitmapFiberId]) {
-      fiberCache = indexCacheInstance.get(fiber)
-    }
-    fiberCache
-  }
+      indexCacheInstance.getIfPresent(fiber)
+    } else null
 
-  override def getFibers: Set[FiberId] = {
+  override def getFibers: Set[FiberId] =
     dataCacheInstance.asMap().keySet().asScala.toSet ++
       indexCacheInstance.asMap().keySet().asScala.toSet
-  }
 
   override def invalidate(fiber: FiberId): Unit = {
     if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[TestFiberId]) {
