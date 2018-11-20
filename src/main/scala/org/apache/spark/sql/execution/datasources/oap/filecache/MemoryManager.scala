@@ -152,7 +152,7 @@ private[filecache] class OffHeapMemoryManager(sparkEnv: SparkEnv)
       OapConf.OAP_FIBERCACHE_USE_OFFHEAP_RATIO.key,
       OapConf.OAP_FIBERCACHE_USE_OFFHEAP_RATIO.defaultValue.get)
     logInfo(s"Oap use ${useOffHeapRatio * 100}% of 'spark.memory.offHeap.size' for fiber cache.")
-    assert(useOffHeapRatio > 0 && useOffHeapRatio < 1,
+    assert(useOffHeapRatio > 0 && useOffHeapRatio <1,
       "OapConf 'spark.sql.oap.fiberCache.use.offheap.ratio' must more than 0 and less than 1.")
     (memoryManager.maxOffHeapStorageMemory * useOffHeapRatio).toLong
   }
