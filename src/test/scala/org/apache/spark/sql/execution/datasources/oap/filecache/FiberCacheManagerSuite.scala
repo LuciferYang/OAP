@@ -284,6 +284,7 @@ class FiberCacheManagerSuite extends SharedOapContext {
   }
 
   test("LRU blocks memory free") {
+    Thread.sleep(3000)
     val memorySizeInMB = (memoryManager.cacheMemory / mbSize).toInt
     val dataInUse = generateData(mbSize)
     val fiberInUse = TestFiberId(

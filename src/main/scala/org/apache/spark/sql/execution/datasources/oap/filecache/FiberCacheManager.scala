@@ -103,7 +103,8 @@ private[sql] class FiberCacheManager(
   private val cacheBackend: OapCache = {
     val cacheName = sparkEnv.conf.get("spark.oap.cache.strategy", DEFAULT_CACHE_STRATEGY)
     if (cacheName.equals(GUAVA_CACHE)) {
-      new GuavaOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory)
+      new GuavaOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory,
+        sparkEnv.conf.getDouble("spark.oap.data.cache.used.percent", 0.8))
     } else if (cacheName.equals(SIMPLE_CACHE)) {
       new SimpleOapCache()
     } else {
@@ -121,6 +122,10 @@ private[sql] class FiberCacheManager(
   def get(fiber: FiberId): FiberCache = {
     logDebug(s"Getting Fiber: $fiber")
     cacheBackend.get(fiber)
+  }
+
+  def exists(fiber: FiberId): Boolean = {
+    cacheBackend.exists(fiber)
   }
 
   def releaseIndexCache(indexName: String): Unit = {
