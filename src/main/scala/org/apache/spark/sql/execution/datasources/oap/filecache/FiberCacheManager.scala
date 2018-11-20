@@ -105,8 +105,8 @@ private[sql] class FiberCacheManager(
     val cacheName = sparkEnv.conf.get("spark.oap.cache.strategy", DEFAULT_CACHE_STRATEGY)
     if (cacheName.equals(GUAVA_CACHE)) {
       new GuavaOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory,
-        sparkEnv.conf.getDouble(OapConf.OAP_FIBERCACHE_USE_OFFHEAP_RATIO.key, OapConf
-          .OAP_FIBERCACHE_USE_OFFHEAP_RATIO.defaultValue.get))
+        sparkEnv.conf.getDouble(OapConf.OAP_DATAFIBER_USE_FIBERCACHE_RATIO.key, OapConf
+          .OAP_DATAFIBER_USE_FIBERCACHE_RATIO.defaultValue.get))
     } else if (cacheName.equals(SIMPLE_CACHE)) {
       new SimpleOapCache()
     } else {
