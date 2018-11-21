@@ -59,7 +59,7 @@ import org.apache.spark.sql.types.AtomicType
 object FileSourceStrategy extends Strategy with Logging {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case PhysicalOperation(projects, filters,
-      l @ LogicalRelation(_fsRelation: HadoopFsRelation, _, table)) =>
+      l @ LogicalRelation(fsRelation: HadoopFsRelation, _, table)) =>
       // Filters on this relation fall into four categories based on where we can use them to avoid
       // reading unneeded data:
       //  - partition keys only - used to prune directories to read
@@ -80,16 +80,14 @@ object FileSourceStrategy extends Strategy with Logging {
 
       val partitionColumns =
         l.resolve(
-          _fsRelation.partitionSchema, _fsRelation.sparkSession.sessionState.analyzer.resolver)
+          fsRelation.partitionSchema, fsRelation.sparkSession.sessionState.analyzer.resolver)
       val partitionSet = AttributeSet(partitionColumns)
       val partitionKeyFilters =
         ExpressionSet(normalizedFilters.filter(_.references.subsetOf(partitionSet)))
       logInfo(s"Pruning directories with: ${partitionKeyFilters.mkString(",")}")
 
-      val selectedPartitions = _fsRelation.location.listFiles(partitionKeyFilters.toSeq)
-
       val dataColumns =
-        l.resolve(_fsRelation.dataSchema, _fsRelation.sparkSession.sessionState.analyzer.resolver)
+        l.resolve(fsRelation.dataSchema, fsRelation.sparkSession.sessionState.analyzer.resolver)
 
       // Partition keys are not available in the statistics of the files.
       val dataFilters = normalizedFilters.filter(_.references.intersect(partitionSet).isEmpty)
@@ -108,95 +106,6 @@ object FileSourceStrategy extends Strategy with Logging {
           .filterNot(partitionColumns.contains)
       val outputSchema = readDataColumns.toStructType
       logInfo(s"Output Data Schema: ${outputSchema.simpleString(5)}")
-
-      val fsRelation: HadoopFsRelation = _fsRelation.fileFormat match {
-        case _: ReadOnlyParquetFileFormat =>
-          logInfo("index operation for parquet, retain ReadOnlyParquetFileFormat.")
-          _fsRelation
-        case _: ReadOnlyOrcFileFormat =>
-          logInfo("index operation for orc, retain ReadOnlyOrcFileFormat.")
-          _fsRelation
-        // There are two scenarios will use OptimizedParquetFileFormat:
-        // 1. canUseCache: OAP_PARQUET_ENABLED is true and OAP_PARQUET_DATA_CACHE_ENABLED is true
-        //    and PARQUET_VECTORIZED_READER_ENABLED is true and WHOLESTAGE_CODEGEN_ENABLED is
-        //    true and all fields in outputSchema are AtomicType.
-        // 2. canUseIndex: OAP_PARQUET_ENABLED is true and hasAvailableIndex.
-        // Other scenarios still use ParquetFileFormat.
-        case _: ParquetFileFormat
-          if _fsRelation.sparkSession.conf.get(OapConf.OAP_PARQUET_ENABLED) =>
-
-          val optimizedParquetFileFormat = new OptimizedParquetFileFormat
-          optimizedParquetFileFormat
-            .init(_fsRelation.sparkSession,
-              _fsRelation.options,
-              selectedPartitions.flatMap(p => p.files))
-
-          def canUseCache: Boolean = {
-            val runtimeConf = _fsRelation.sparkSession.conf
-            val ret = runtimeConf.get(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED) &&
-              runtimeConf.get(SQLConf.PARQUET_VECTORIZED_READER_ENABLED) &&
-              runtimeConf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED) &&
-              outputSchema.forall(_.dataType.isInstanceOf[AtomicType])
-            if (ret) {
-              logInfo("data cache enable and suitable for use , " +
-                "will replace with OptimizedParquetFileFormat.")
-            }
-            ret
-          }
-
-          def canUseIndex: Boolean = {
-            val ret = optimizedParquetFileFormat.hasAvailableIndex(normalizedFilters)
-            if (ret) {
-              logInfo("hasAvailableIndex = true, " +
-                "will replace with OptimizedParquetFileFormat.")
-            }
-            ret
-          }
-
-          if (canUseCache || canUseIndex) {
-            _fsRelation.copy(fileFormat = optimizedParquetFileFormat)(_fsRelation.sparkSession)
-          } else {
-            logInfo("hasAvailableIndex = false and data cache disable, will retain " +
-              "ParquetFileFormat.")
-            _fsRelation
-          }
-
-        case _: OrcFileFormat
-          if _fsRelation.sparkSession.conf.get(OapConf.OAP_ORC_ENABLED) =>
-          val optimizedOrcFileFormat = new OptimizedOrcFileFormat
-          optimizedOrcFileFormat
-            .init(_fsRelation.sparkSession,
-              _fsRelation.options,
-              selectedPartitions.flatMap(p => p.files))
-
-          if (optimizedOrcFileFormat.hasAvailableIndex(normalizedFilters)) {
-            logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
-            // isOapOrcFileFormat is used to indicate to read orc data with oap index accelerated.
-            val orcOptions: Map[String, String] =
-              Map(SQLConf.ORC_FILTER_PUSHDOWN_ENABLED.key ->
-                _fsRelation.sparkSession.sessionState.conf.orcFilterPushDown.toString) ++
-                Map("isOapOrcFileFormat" -> "true") ++
-                _fsRelation.options
-
-            _fsRelation.copy(fileFormat = optimizedOrcFileFormat,
-              options = orcOptions)(_fsRelation.sparkSession)
-
-          } else {
-            logInfo("hasAvailableIndex = false, will retain ParquetFileFormat.")
-            _fsRelation
-          }
-
-        case _: OapFileFormat =>
-          _fsRelation.fileFormat.asInstanceOf[OapFileFormat].init(
-            _fsRelation.sparkSession,
-            _fsRelation.options,
-            selectedPartitions.flatMap(p => p.files))
-          _fsRelation
-
-        case _: FileFormat =>
-          _fsRelation
-      }
-
       val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
       logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
 
@@ -204,7 +113,8 @@ object FileSourceStrategy extends Strategy with Logging {
 
       val scan =
         new FileSourceScanExec(
-          fsRelation,
+          OptimizedHadoopFsRelation(fsRelation,
+            partitionKeyFilters, normalizedFilters, outputSchema),
           outputAttributes,
           outputSchema,
           partitionKeyFilters.toSeq,
