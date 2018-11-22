@@ -27,6 +27,7 @@ import org.apache.hadoop.fs._
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ShutdownHookManager
 
@@ -365,6 +366,62 @@ private[oap] case class DataSourceMeta(
     }
 
     def checkAttribute(filter: Expression): Boolean = filter match {
+      case Or(left, right) =>
+        checkAttribute(left) && checkAttribute(right)
+      case And(left, right) =>
+        checkAttribute(left) && checkAttribute(right)
+      case EqualTo(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case EqualTo(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case LessThan(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case LessThan(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case LessThanOrEqual(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case LessThanOrEqual(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case GreaterThan(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case GreaterThan(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case GreaterThanOrEqual(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case GreaterThanOrEqual(_, attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case In(attrRef: AttributeReference, _) =>
+        checkInMetaSet(attrRef)
+      case IsNull(attrRef: AttributeReference) =>
+        checkInMetaSet(attrRef)
+      case _ => false
+    }
+
+    checkAttribute(exp)
+  }
+
+  // Check whether this expression is supported by index or not
+  def isSupportedByIndex(exp: Filter, requirement: Option[IndexType] = None): Boolean = {
+    var attr: String = null
+    def checkInMetaSet(attrRef: AttributeReference): Boolean = {
+      if (attr ==  null || attr == attrRef.name) {
+        attr = attrRef.name
+        indexMetas.exists{
+          _.indexType match {
+            case index @ BTreeIndex(entries) =>
+              schema(entries.head.ordinal).name == attr && index.satisfy(requirement)
+            case index @ BitMapIndex(entries) =>
+              entries.map(ordinal =>
+                schema(ordinal).name).contains(attr) && index.satisfy(requirement)
+            case _ => false
+          }
+        }
+      } else {
+        false
+      }
+    }
+
+    def checkAttribute(filter: Filter): Boolean = filter match {
       case Or(left, right) =>
         checkAttribute(left) && checkAttribute(right)
       case And(left, right) =>
