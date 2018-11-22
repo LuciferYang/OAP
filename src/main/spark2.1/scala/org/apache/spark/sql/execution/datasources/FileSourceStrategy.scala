@@ -113,8 +113,9 @@ object FileSourceStrategy extends Strategy with Logging {
 
       val scan =
         new FileSourceScanExec(
-          OptimizedHadoopFsRelation(fsRelation,
-            partitionKeyFilters, normalizedFilters, outputSchema),
+//          OptimizedHadoopFsRelation(fsRelation,
+//            partitionKeyFilters.toSeq, pushedDownFilters, outputSchema),
+          fsRelation,
           outputAttributes,
           outputSchema,
           partitionKeyFilters.toSeq,

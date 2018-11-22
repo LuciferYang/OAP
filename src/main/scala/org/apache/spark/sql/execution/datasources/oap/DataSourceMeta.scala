@@ -27,6 +27,7 @@ import org.apache.hadoop.fs._
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types._
 import org.apache.spark.util.ShutdownHookManager
 
@@ -344,11 +345,11 @@ private[oap] case class DataSourceMeta(
     @transient fileHeader: FileHeader) extends Serializable {
 
     // Check whether this expression is supported by index or not
-  def isSupportedByIndex(exp: Expression, requirement: Option[IndexType] = None): Boolean = {
+  def isSupportedByIndex(exp: Filter, requirement: Option[IndexType] = None): Boolean = {
     var attr: String = null
-    def checkInMetaSet(attrRef: AttributeReference): Boolean = {
-      if (attr ==  null || attr == attrRef.name) {
-        attr = attrRef.name
+    def checkInMetaSet(attribute: String): Boolean = {
+      if (attr ==  null || attr == attribute) {
+        attr = attribute
         indexMetas.exists{
           _.indexType match {
             case index @ BTreeIndex(entries) =>
@@ -364,36 +365,32 @@ private[oap] case class DataSourceMeta(
       }
     }
 
-    def checkAttribute(filter: Expression): Boolean = filter match {
-      case Or(left, right) =>
-        checkAttribute(left) && checkAttribute(right)
-      case And(left, right) =>
-        checkAttribute(left) && checkAttribute(right)
-      case EqualTo(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case EqualTo(_, attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case LessThan(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case LessThan(_, attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case LessThanOrEqual(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case LessThanOrEqual(_, attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case GreaterThan(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case GreaterThan(_, attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case GreaterThanOrEqual(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case GreaterThanOrEqual(_, attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case In(attrRef: AttributeReference, _) =>
-        checkInMetaSet(attrRef)
-      case IsNull(attrRef: AttributeReference) =>
-        checkInMetaSet(attrRef)
-      case _ => false
+    def checkAttribute(filter: Filter): Boolean = {
+      import org.apache.spark.sql.sources._
+      filter match {
+        case Or(left, right) =>
+          checkAttribute(left) && checkAttribute(right)
+        case And(left, right) =>
+          checkAttribute(left) && checkAttribute(right)
+        case EqualTo(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case LessThan(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case LessThanOrEqual(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case GreaterThan(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case GreaterThanOrEqual(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case In(attribute: String, _) =>
+          checkInMetaSet(attribute)
+        case IsNull(attribute: String) =>
+          checkInMetaSet(attribute)
+        // support this ?
+        case StringStartsWith(attribute, _) =>
+          checkInMetaSet(attribute)
+        case _ => false
+      }
     }
 
     checkAttribute(exp)

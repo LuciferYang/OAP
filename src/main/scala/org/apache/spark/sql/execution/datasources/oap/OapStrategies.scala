@@ -38,6 +38,7 @@ import org.apache.spark.sql.execution.datasources.oap.utils.CaseInsensitiveMap
 import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.adapter.{AggregateFunctionAdapter, FileIndexAdapter, FileSourceScanExecAdapter, LogicalPlanAdapter}
+import org.apache.spark.sql.oap.adapter.FileSourceScanExecAdapter.logInfo
 import org.apache.spark.util.Utils
 
 trait OapStrategies extends Logging {
@@ -348,17 +349,20 @@ trait OapStrategies extends Logging {
     val selectedPartitions = FileIndexAdapter.listFiles(
       _fsRelation.location, partitionKeyFilters.toSeq, Nil)
 
+
     _fsRelation.fileFormat match {
       case fileFormat: OapFileFormat =>
         fileFormat.init(_fsRelation.sparkSession, oapOption,
-          selectedPartitions.flatMap(p => p.files))
+        selectedPartitions.flatMap(p => p.files))
 
-        if (fileFormat.hasAvailableIndex(normalizedIndexHint, indexRequirements)) {
+        // Partition keys are not available in the statistics of the files.
+        val dataFilters = normalizedIndexHint.filter(_.references.intersect(partitionSet).isEmpty)
+        val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
+        logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
+
+        if (fileFormat.hasAvailableIndex(pushedDownFilters, indexRequirements)) {
           val dataColumns = l.resolve(
-              _fsRelation.dataSchema, _fsRelation.sparkSession.sessionState.analyzer.resolver)
-
-          // Partition keys are not available in the statistics of the files.
-          val dataFilters = normalizedIndexHint.filter(_.references.intersect(partitionSet).isEmpty)
+          _fsRelation.dataSchema, _fsRelation.sparkSession.sessionState.analyzer.resolver)
 
           // Predicates with both partition keys and attributes need to be evaluated after the scan.
           val afterScanFilters = filterSet -- partitionKeyFilters.filter(_.references.nonEmpty)
@@ -383,7 +387,7 @@ trait OapStrategies extends Logging {
             outputAttributes,
             outputSchema,
             partitionKeyFilters.toSeq,
-            dataFilters,
+            pushedDownFilters,
             table.map(_.identifier))
 
           val afterScanFilter = afterScanFilters.toSeq.reduceOption(expressions.And)

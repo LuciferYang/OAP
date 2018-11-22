@@ -200,22 +200,22 @@ private[sql] class OapFileFormat extends FileFormat
   /**
    * Check if index satisfies strategies' requirements.
    *
-   * @param expressions: Index expressions.
+   * @param filters: Index expressions.
    * @param requiredTypes: Required index metrics by optimization strategies.
    * @return
    */
   def hasAvailableIndex(
-      expressions: Seq[Expression],
+      filters: Seq[Filter],
       requiredTypes: Seq[IndexType] = Nil): Boolean = {
-    if (expressions.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
+    if (filters.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
       meta match {
         case Some(m) if requiredTypes.isEmpty =>
-          expressions.exists(m.isSupportedByIndex(_, None))
-        case Some(m) if requiredTypes.length == expressions.length =>
-          expressions.zip(requiredTypes).exists{ x =>
-            val expression = x._1
+          filters.exists(m.isSupportedByIndex(_, None))
+        case Some(m) if requiredTypes.length == filters.length =>
+          filters.zip(requiredTypes).exists{ x =>
+            val filter = x._1
             val requirement = Some(x._2)
-            m.isSupportedByIndex(expression, requirement)
+            m.isSupportedByIndex(filter, requirement)
           }
         case _ => false
       }

@@ -26,7 +26,8 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.sql.{Row, SaveMode}
-import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.catalyst.expressions.{Ascending, Descending}
+import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.oap.{SharedOapContext, TestIndex}
 import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
 import org.apache.spark.util.Utils
@@ -415,126 +416,73 @@ class DataSourceMetaSuite extends SharedOapContext with BeforeAndAfter {
       hashSetList.append(bitmapIndexAttrSet)
 
       // Query "select * from t where b == 1" will generate IsNotNull expr which is unsupportted
-      val isNotNull = Seq(IsNotNull(AttributeReference("b", IntegerType)()),
-        IsNotNull(AttributeReference("a", IntegerType)()))
-      val eq = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)))
-      val eq2 = Seq(EqualTo(AttributeReference("b", IntegerType)(), Literal(1)))
-      val eq3 = Seq(EqualTo(Literal(1), AttributeReference("a", IntegerType)()))
-      val lt = Seq(LessThan(AttributeReference("a", IntegerType)(), Literal(1)))
-      val gt = Seq(GreaterThan(AttributeReference("a", IntegerType)(), Literal(1)))
-      val gt2 = Seq(GreaterThan(AttributeReference("c", StringType)(), Literal("A Row")))
-      val lte = Seq(LessThanOrEqual(AttributeReference("a", IntegerType)(), Literal(1)))
-      val gte = Seq(GreaterThanOrEqual(AttributeReference("a", IntegerType)(), Literal(1)))
-      val gte1 = Seq(GreaterThanOrEqual(Literal(1), AttributeReference("a", IntegerType)()))
-      val or1 = Seq(Or(GreaterThan(AttributeReference("a", IntegerType)(), Literal(15)),
-        EqualTo(AttributeReference("a", IntegerType)(), Literal(1))))
-      val or2 = Seq(Or(GreaterThan(AttributeReference("a", IntegerType)(), Literal(15)),
-        LessThan(AttributeReference("a", IntegerType)(), Literal(3))))
+      val isNotNull = Seq(IsNotNull("b"), IsNotNull("a"))
+      val eq = Seq(EqualTo("a", 1))
+      val eq2 = Seq(EqualTo("b", 1))
+      val lt = Seq(LessThan("a", 1))
+      val gt = Seq(GreaterThan("a", 1))
+      val gt2 = Seq(GreaterThan("c", "A Row"))
+      val lte = Seq(LessThanOrEqual("a", 1))
+      val gte = Seq(GreaterThanOrEqual("a", 1))
+      val or1 = Seq(Or(GreaterThan("a", 15), EqualTo("a", 1)))
+      val or2 = Seq(Or(GreaterThan("a", 15), LessThan("a", 3)))
+      val or3 = Seq(Or(GreaterThan("c", "A row"), LessThan("c", "A row")))
+      val or4 = Seq(Or(GreaterThan("a", 3), LessThan("c", "A row")))
 
-      val or3 = Seq(Or(GreaterThan(AttributeReference("c", StringType)(), Literal("A row")),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row"))))
-
-      val or4 = Seq(Or(GreaterThan(AttributeReference("a", IntegerType)(), Literal(3)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row"))))
-
-      val complicated_Or = Seq(Or(GreaterThan(AttributeReference("a", IntegerType)(), Literal(50)),
-        And(GreaterThan(AttributeReference("a", IntegerType)(), Literal(3)),
-          LessThan(AttributeReference("a", IntegerType)(), Literal(24)))))
-
-      val moreComplicated_Or =
-        Seq(Or(And(GreaterThan(AttributeReference("a", IntegerType)(), Literal(56)),
-          LessThan(AttributeReference("a", IntegerType)(), Literal(97))),
-          And(GreaterThan(AttributeReference("a", IntegerType)(), Literal(3)),
-            LessThan(AttributeReference("a", IntegerType)(), Literal(24)))))
+      val complicatedOr = Seq(Or(GreaterThan("a", 50), And(GreaterThan("a", 3), LessThan("a", 24))))
+      val moreComplicatedOr =
+        Seq(Or(And(GreaterThan("a", 56), LessThan("a", 97)),
+          And(GreaterThan("a", 3), LessThan("a", 24))))
 
       // ************** Muliti-Column Search Queries**********
-      val multi_column1 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        EqualTo(AttributeReference("b", IntegerType)(), Literal(56)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column2 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("b", IntegerType)(), Literal(56)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column3 = Seq(GreaterThan(AttributeReference("a", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("b", IntegerType)(), Literal(56)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column4 = Seq(LessThan(AttributeReference("a", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("b", IntegerType)(), Literal(56)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column5 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column6 = Seq(GreaterThan(AttributeReference("a", IntegerType)(), Literal(1)),
-        LessThan(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column7 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("b", IntegerType)(), Literal(56)))
-
-      val multi_column8 = Seq(LessThan(AttributeReference("a", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("b", IntegerType)(), Literal(56)))
-
-      val multi_column9 = Seq(EqualTo(AttributeReference("b", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("c", StringType)(), Literal("a Row")))
-
-      val multi_column10 = Seq(LessThan(AttributeReference("b", IntegerType)(), Literal(1)),
-        GreaterThan(AttributeReference("c", StringType)(), Literal("a Row")))
-
-      val multi_column11 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        EqualTo(AttributeReference("b", IntegerType)(), Literal(56)),
-        EqualTo(AttributeReference("c", StringType)(), Literal("A row")))
-
-      val multi_column12 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        EqualTo(AttributeReference("b", IntegerType)(), Literal(56)),
-        Or(GreaterThan(AttributeReference("a", IntegerType)(), Literal(15)),
-          EqualTo(AttributeReference("a", IntegerType)(), Literal(18))))
-
-      val multi_column13 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        EqualTo(AttributeReference("b", IntegerType)(), Literal(56)),
-        Or(GreaterThan(AttributeReference("c", StringType)(), Literal("a row")),
-          EqualTo(AttributeReference("c", StringType)(), Literal("a row"))))
-
+      val multiColumn1 = Seq(EqualTo("a", 1), EqualTo("b", 56), LessThan("c", "A row"))
+      val multiColumn2 = Seq(EqualTo("a", 1), GreaterThan("b", 56), LessThan("c", "A row"))
+      val multiColumn3 = Seq(GreaterThan("a", 1), GreaterThan("b", 56), LessThan("c", "A row"))
+      val multiColumn4 = Seq(LessThan("a", 1), GreaterThan("b", 56), LessThan("c", "A row"))
+      val multiColumn5 = Seq(EqualTo("a", 1), LessThan("c", "A row"))
+      val multiColumn6 = Seq(GreaterThan("a", 1), LessThan("c", "A row"))
+      val multiColumn7 = Seq(EqualTo("a", 1), GreaterThan("b", 56))
+      val multiColumn8 = Seq(LessThan("a", 1), GreaterThan("b", 56))
+      val multiColumn9 = Seq(EqualTo("b", 1), GreaterThan("c", "a Row"))
+      val multiColumn10 = Seq(LessThan("b", 1), GreaterThan("c", "a Row"))
+      val multiColumn11 = Seq(EqualTo("a", 1), EqualTo("b", 56), EqualTo("c", "A row"))
+      val multiColumn12 = Seq(EqualTo("a", 1), EqualTo("b", 56),
+        Or(GreaterThan("a", 15), EqualTo("a", 18)))
+      val multiColumn13 = Seq(EqualTo("a", 1), EqualTo("b", 56),
+        Or(GreaterThan("c", "a row"), EqualTo("c", "a row")))
       // a contradictory SQL condition
-      val multi_column14 = Seq(EqualTo(AttributeReference("a", IntegerType)(), Literal(1)),
-        EqualTo(AttributeReference("b", IntegerType)(), Literal(56)),
-        EqualTo(AttributeReference("c", StringType)(), Literal("A row")),
-        GreaterThan(AttributeReference("a", IntegerType)(), Literal(10)))
+      val multiColumn14 = Seq(EqualTo("a", 1), EqualTo("b", 56), EqualTo("c", "A row"),
+        GreaterThan("a", 10))
 
       // No requirement
       assert(!isNotNull.exists(meta.isSupportedByIndex(_, None)))
       assert(eq.exists(meta.isSupportedByIndex(_, None)))
-      assert(eq3.exists(meta.isSupportedByIndex(_, None)))
       assert(lt.exists(meta.isSupportedByIndex(_, None)))
       assert(gt.exists(meta.isSupportedByIndex(_, None)))
       assert(gt2.exists(meta.isSupportedByIndex(_, None)))
       assert(lte.exists(meta.isSupportedByIndex(_, None)))
       assert(gte.exists(meta.isSupportedByIndex(_, None)))
-      assert(gte1.exists(meta.isSupportedByIndex(_, None)))
       assert(!eq2.exists(meta.isSupportedByIndex(_, None)))
       assert(or1.exists(meta.isSupportedByIndex(_, None)))
       assert(or2.exists(meta.isSupportedByIndex(_, None)))
       assert(or3.exists(meta.isSupportedByIndex(_, None)))
       assert(!or4.exists(meta.isSupportedByIndex(_, None)))
-      assert(complicated_Or.exists(meta.isSupportedByIndex(_, None)))
-      assert(
-        moreComplicated_Or.exists(meta.isSupportedByIndex(_, None))
-      )
-      assert(multi_column1.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column2.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column3.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column4.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column5.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column6.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column7.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column8.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column9.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column10.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column11.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column12.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column13.exists(meta.isSupportedByIndex(_, None)))
-      assert(multi_column14.exists(meta.isSupportedByIndex(_, None)))
+      assert(complicatedOr.exists(meta.isSupportedByIndex(_, None)))
+      assert(moreComplicatedOr.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn1.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn2.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn3.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn4.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn5.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn6.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn7.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn8.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn9.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn10.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn11.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn12.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn13.exists(meta.isSupportedByIndex(_, None)))
+      assert(multiColumn14.exists(meta.isSupportedByIndex(_, None)))
 
       // check requirements.
       val indexRequirement: IndexType = BTreeIndex()
@@ -543,9 +491,8 @@ class DataSourceMetaSuite extends SharedOapContext with BeforeAndAfter {
       assert(!gt2.exists(meta.isSupportedByIndex(_, Some(indexRequirement))))
 
       val multiRequirements: Seq[IndexType] = Seq(BTreeIndex(), BitMapIndex())
-      assert(
-        multi_column6.zip(multiRequirements)
-          .map(x => meta.isSupportedByIndex(x._1, Some(x._2))).reduce(_ && _))
+      assert(multiColumn6.zip(multiRequirements)
+        .map(x => meta.isSupportedByIndex(x._1, Some(x._2))).reduce(_ && _))
     }
   }
 }

@@ -18,36 +18,53 @@
 package org.apache.spark.sql.execution.datasources
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.Strategy
+import org.apache.spark.sql.{execution, Strategy}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, ProjectExec, SparkPlan}
+import org.apache.spark.sql.oap.adapter.FileSourceScanExecAdapter
 
 object OapFileSourceStrategy extends Strategy with Logging {
-  def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
-    case PhysicalOperation(_, _, LogicalRelation(_: HadoopFsRelation, _, _)) =>
-      val plans = FileSourceStrategy(plan)
-      plans.head match {
+  def apply(plan: LogicalPlan): Seq[SparkPlan] = {
+
+    def tryOptimize(head: SparkPlan): Seq[SparkPlan] = {
+      head match {
         // Project -> Filter -> Scan
         case ProjectExec(projectList, FilterExec(condition,
-          FileSourceScanExec(_relation, output, outputSchema, partitionFilters,
-            dataFilters, metastoreTableIdentifier))) =>
-          plans
+          FileSourceScanExec(relation, output, outputSchema, partitionFilters,
+          dataFilters, tableIdentifier))) =>
+          val scan = FileSourceScanExecAdapter.createOptimizedFileSourceScanExec(relation,
+            output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+          execution.ProjectExec(projectList, execution.FilterExec(condition, scan)) :: Nil
         // Project -> Scan
         case ProjectExec(projectList,
-          FileSourceScanExec(_relation, output, outputSchema, partitionFilters,
-            dataFilters, metastoreTableIdentifier)) =>
-          plans
+          FileSourceScanExec(relation, output, outputSchema, partitionFilters,
+          dataFilters, tableIdentifier)) =>
+          val scan = FileSourceScanExecAdapter.createOptimizedFileSourceScanExec(relation,
+            output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+          execution.ProjectExec(projectList, scan) :: Nil
         // Filter -> Scan
-        case FilterExec(condition, FileSourceScanExec(_relation, output, outputSchema,
-          partitionFilters, dataFilters, metastoreTableIdentifier)) =>
-          plans
+        case FilterExec(condition, FileSourceScanExec(relation, output, outputSchema,
+          partitionFilters, dataFilters, tableIdentifier)) =>
+          val scan = FileSourceScanExecAdapter.createOptimizedFileSourceScanExec(relation,
+            output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+          execution.FilterExec(condition, scan) :: Nil
         // Scan
-        case FileSourceScanExec(_relation, output, outputSchema, partitionFilters,
-          dataFilters, metastoreTableIdentifier) =>
-          plans
+        case FileSourceScanExec(relation, output, outputSchema, partitionFilters,
+          dataFilters, tableIdentifier) =>
+          FileSourceScanExecAdapter.createOptimizedFileSourceScanExec(relation,
+            output, outputSchema, partitionFilters, dataFilters, tableIdentifier) :: Nil
+        case _ => throw new OapException(s"Unsupport plan mode $head")
       }
-      plans
-    case _ => Nil
+    }
+
+    plan match {
+      case PhysicalOperation(_, _, LogicalRelation(_: HadoopFsRelation, _, _)) =>
+        FileSourceStrategy(plan).headOption match {
+          case Some(head) => tryOptimize(head)
+          case _ => Nil
+        }
+      case _ => Nil
+    }
   }
 }

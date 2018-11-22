@@ -30,9 +30,9 @@ import org.apache.spark.sql.types.{AtomicType, StructType}
 
 object OptimizedHadoopFsRelation extends Logging {
 
-  def apply(relation: HadoopFsRelation, partitionKeyFilters: ExpressionSet,
-      normalizedFilters: Seq[Expression], outputSchema: StructType): HadoopFsRelation = {
-    val selectedPartitions = relation.location.listFiles(partitionKeyFilters.toSeq)
+  def apply(relation: HadoopFsRelation, partitionFilters: Seq[Expression],
+      pushedDownFilters: Seq[Filter], outputSchema: StructType): HadoopFsRelation = {
+    val selectedPartitions = relation.location.listFiles(partitionFilters)
 
     relation.fileFormat match {
       case _: ReadOnlyParquetFileFormat =>
@@ -70,7 +70,7 @@ object OptimizedHadoopFsRelation extends Logging {
         }
 
         def canUseIndex: Boolean = {
-          val ret = optimizedParquetFileFormat.hasAvailableIndex(normalizedFilters)
+          val ret = optimizedParquetFileFormat.hasAvailableIndex(pushedDownFilters)
           if (ret) {
             logInfo("hasAvailableIndex = true, " +
               "will replace with OptimizedParquetFileFormat.")
@@ -94,101 +94,7 @@ object OptimizedHadoopFsRelation extends Logging {
             relation.options,
             selectedPartitions.flatMap(p => p.files))
 
-        if (optimizedOrcFileFormat.hasAvailableIndex(normalizedFilters)) {
-          logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
-          // isOapOrcFileFormat is used to indicate to read orc data with oap index accelerated.
-          val orcOptions: Map[String, String] =
-            Map(SQLConf.ORC_FILTER_PUSHDOWN_ENABLED.key ->
-              relation.sparkSession.sessionState.conf.orcFilterPushDown.toString) ++
-              Map("isOapOrcFileFormat" -> "true") ++
-              relation.options
-
-          relation.copy(fileFormat = optimizedOrcFileFormat,
-            options = orcOptions)(relation.sparkSession)
-
-        } else {
-          logInfo("hasAvailableIndex = false, will retain ParquetFileFormat.")
-          relation
-        }
-
-      case _: OapFileFormat =>
-        relation.fileFormat.asInstanceOf[OapFileFormat].init(
-          relation.sparkSession,
-          relation.options,
-          selectedPartitions.flatMap(p => p.files))
-        relation
-
-      case _: FileFormat =>
-        relation
-    }
-  }
-
-
-  def apply(relation: HadoopFsRelation, partitionKeyFilters: ExpressionSet,
-      dataFilters: Seq[Filter], outputSchema: StructType): HadoopFsRelation = {
-    val selectedPartitions = relation.location.listFiles(partitionKeyFilters.toSeq)
-
-    relation.fileFormat match {
-      case _: ReadOnlyParquetFileFormat =>
-        logInfo("index operation for parquet, retain ReadOnlyParquetFileFormat.")
-        relation
-      case _: ReadOnlyOrcFileFormat =>
-        logInfo("index operation for orc, retain ReadOnlyOrcFileFormat.")
-        relation
-      // There are two scenarios will use OptimizedParquetFileFormat:
-      // 1. canUseCache: OAP_PARQUET_ENABLED is true and OAP_PARQUET_DATA_CACHE_ENABLED is true
-      //    and PARQUET_VECTORIZED_READER_ENABLED is true and WHOLESTAGE_CODEGEN_ENABLED is
-      //    true and all fields in outputSchema are AtomicType.
-      // 2. canUseIndex: OAP_PARQUET_ENABLED is true and hasAvailableIndex.
-      // Other scenarios still use ParquetFileFormat.
-      case _: ParquetFileFormat
-        if relation.sparkSession.conf.get(OapConf.OAP_PARQUET_ENABLED) =>
-
-        val optimizedParquetFileFormat = new OptimizedParquetFileFormat
-        optimizedParquetFileFormat
-          .init(relation.sparkSession,
-            relation.options,
-            selectedPartitions.flatMap(p => p.files))
-
-        def canUseCache: Boolean = {
-          val runtimeConf = relation.sparkSession.conf
-          val ret = runtimeConf.get(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED) &&
-            runtimeConf.get(SQLConf.PARQUET_VECTORIZED_READER_ENABLED) &&
-            runtimeConf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED) &&
-            outputSchema.forall(_.dataType.isInstanceOf[AtomicType])
-          if (ret) {
-            logInfo("data cache enable and suitable for use , " +
-              "will replace with OptimizedParquetFileFormat.")
-          }
-          ret
-        }
-
-        def canUseIndex: Boolean = {
-          val ret = optimizedParquetFileFormat.hasAvailableIndex(normalizedFilters)
-          if (ret) {
-            logInfo("hasAvailableIndex = true, " +
-              "will replace with OptimizedParquetFileFormat.")
-          }
-          ret
-        }
-
-        if (canUseCache || canUseIndex) {
-          relation.copy(fileFormat = optimizedParquetFileFormat)(relation.sparkSession)
-        } else {
-          logInfo("hasAvailableIndex = false and data cache disable, will retain " +
-            "ParquetFileFormat.")
-          relation
-        }
-
-      case _: OrcFileFormat
-        if relation.sparkSession.conf.get(OapConf.OAP_ORC_ENABLED) =>
-        val optimizedOrcFileFormat = new OptimizedOrcFileFormat
-        optimizedOrcFileFormat
-          .init(relation.sparkSession,
-            relation.options,
-            selectedPartitions.flatMap(p => p.files))
-
-        if (optimizedOrcFileFormat.hasAvailableIndex(normalizedFilters)) {
+        if (optimizedOrcFileFormat.hasAvailableIndex(pushedDownFilters)) {
           logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
           // isOapOrcFileFormat is used to indicate to read orc data with oap index accelerated.
           val orcOptions: Map[String, String] =
