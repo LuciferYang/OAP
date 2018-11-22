@@ -19,9 +19,10 @@ package org.apache.spark.sql.oap.adapter
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Expression, Attribute}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, HadoopFsRelation}
+import org.apache.spark.sql.execution.datasources.HadoopFsRelation
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
 object FileSourceScanExecAdapter extends Logging{
@@ -30,10 +31,8 @@ object FileSourceScanExecAdapter extends Logging{
       output: Seq[Attribute],
       requiredSchema: StructType,
       partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression],
+      pushedDownFilters: Seq[Filter],
       metastoreTableIdentifier: Option[TableIdentifier]): FileSourceScanExec = {
-    val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
-    logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
     FileSourceScanExec(
       relation,
       output,

@@ -86,8 +86,6 @@ object FileSourceStrategy extends Strategy with Logging {
         ExpressionSet(normalizedFilters.filter(_.references.subsetOf(partitionSet)))
       logInfo(s"Pruning directories with: ${partitionKeyFilters.mkString(",")}")
 
-      val selectedPartitions = _fsRelation.location.listFiles(partitionKeyFilters.toSeq)
-
       val dataColumns =
         l.resolve(_fsRelation.dataSchema, _fsRelation.sparkSession.sessionState.analyzer.resolver)
 
@@ -108,6 +106,13 @@ object FileSourceStrategy extends Strategy with Logging {
           .filterNot(partitionColumns.contains)
       val outputSchema = readDataColumns.toStructType
       logInfo(s"Output Data Schema: ${outputSchema.simpleString(5)}")
+
+      val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
+      logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
+
+      val outputAttributes = readDataColumns ++ partitionColumns
+
+      val selectedPartitions = _fsRelation.location.listFiles(partitionKeyFilters.toSeq)
 
       val fsRelation: HadoopFsRelation = _fsRelation.fileFormat match {
         case _: ReadOnlyParquetFileFormat =>
@@ -145,7 +150,8 @@ object FileSourceStrategy extends Strategy with Logging {
           }
 
           def canUseIndex: Boolean = {
-            val ret = optimizedParquetFileFormat.hasAvailableIndex(normalizedFilters)
+            // need _fsRelation.sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX) && ?
+            val ret = optimizedParquetFileFormat.hasAvailableIndex(pushedDownFilters)
             if (ret) {
               logInfo("hasAvailableIndex = true, " +
                 "will replace with OptimizedParquetFileFormat.")
@@ -169,7 +175,7 @@ object FileSourceStrategy extends Strategy with Logging {
               _fsRelation.options,
               selectedPartitions.flatMap(p => p.files))
 
-          if (optimizedOrcFileFormat.hasAvailableIndex(normalizedFilters)) {
+          if (optimizedOrcFileFormat.hasAvailableIndex(pushedDownFilters)) {
             logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
             // isOapOrcFileFormat is used to indicate to read orc data with oap index accelerated.
             val orcOptions: Map[String, String] =
@@ -180,7 +186,6 @@ object FileSourceStrategy extends Strategy with Logging {
 
             _fsRelation.copy(fileFormat = optimizedOrcFileFormat,
               options = orcOptions)(_fsRelation.sparkSession)
-
           } else {
             logInfo("hasAvailableIndex = false, will retain ParquetFileFormat.")
             _fsRelation
@@ -196,11 +201,6 @@ object FileSourceStrategy extends Strategy with Logging {
         case _: FileFormat =>
           _fsRelation
       }
-
-      val pushedDownFilters = dataFilters.flatMap(DataSourceStrategy.translateFilter)
-      logInfo(s"Pushed Filters: ${pushedDownFilters.mkString(",")}")
-
-      val outputAttributes = readDataColumns ++ partitionColumns
 
       val scan =
         new FileSourceScanExec(
