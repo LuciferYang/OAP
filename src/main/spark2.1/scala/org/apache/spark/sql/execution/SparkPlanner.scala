@@ -18,11 +18,10 @@
 package org.apache.spark.sql.execution
 
 import org.apache.spark.SparkContext
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, FileSourceStrategy, OapFileSourceStrategy}
+import org.apache.spark.sql.execution.datasources.{DataSourceStrategy, OapFileSourceStrategy}
 import org.apache.spark.sql.internal.SQLConf
 
 class SparkPlanner(
