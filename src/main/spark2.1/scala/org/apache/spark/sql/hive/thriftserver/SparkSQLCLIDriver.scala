@@ -147,7 +147,7 @@ private[hive] object SparkSQLCLIDriver extends Logging {
     } catch {
       case e: UnsupportedEncodingException => System.exit(3)
     }
-
+    
     if (sessionState.database != null) {
       SparkSQLEnv.sqlContext.sessionState.catalog.setCurrentDatabase(
         s"${sessionState.database}")

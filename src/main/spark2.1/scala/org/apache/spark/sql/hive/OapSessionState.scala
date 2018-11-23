@@ -42,8 +42,8 @@ class OapSessionState(sparkSession: OapSession) extends HiveSessionState(sparkSe
       override val sparkSession: SparkSession = self.sparkSession
 
       override def strategies: Seq[Strategy] = {
+        oapStrategies ++
         experimentalMethods.extraStrategies ++
-          oapStrategies ++
           Seq(
             OapFileSourceStrategy,
             DataSourceStrategy,
