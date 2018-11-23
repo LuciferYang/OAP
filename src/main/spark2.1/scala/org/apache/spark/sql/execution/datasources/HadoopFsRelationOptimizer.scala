@@ -28,9 +28,9 @@ import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.{AtomicType, StructType}
 
-object OptimizedHadoopFsRelation extends Logging {
+object HadoopFsRelationOptimizer extends Logging {
 
-  def apply(relation: HadoopFsRelation, partitionFilters: Seq[Expression],
+  def optimize(relation: HadoopFsRelation, partitionFilters: Seq[Expression],
       pushedDownFilters: Seq[Filter], outputSchema: StructType): HadoopFsRelation = {
     val selectedPartitions = relation.location.listFiles(partitionFilters)
 

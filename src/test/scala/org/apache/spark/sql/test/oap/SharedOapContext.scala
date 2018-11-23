@@ -24,6 +24,7 @@ import org.apache.hadoop.fs.FileSystem
 
 import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources.oap.{IndexType, OapFileFormat}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.{OapDriverRuntime, OapRuntime}
 import org.apache.spark.sql.test.{SharedSQLContext, TestOapLocalClusterSession, TestOapSession, TestSparkSession}
@@ -54,7 +55,6 @@ trait SharedOapContextBase extends SharedSQLContext {
   val oapSparkConf = sparkConf
   // avoid the overflow of offHeap memory
   oapSparkConf.set("spark.memory.offHeap.size", "100m")
-  System.setProperty("spark.testing", "1")
 
   protected override def beforeAll(): Unit = {
     super.beforeAll()

@@ -45,7 +45,7 @@ class OapSessionState(sparkSession: OapSession) extends HiveSessionState(sparkSe
         oapStrategies ++
         experimentalMethods.extraStrategies ++
           Seq(
-            OapFileSourceStrategy,
+            FileSourceStrategy,
             DataSourceStrategy,
             DDLStrategy,
             SpecialLimits,

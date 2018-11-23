@@ -21,7 +21,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, OptimizedHadoopFsRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, HadoopFsRelationOptimizer}
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
@@ -50,7 +50,7 @@ object FileSourceScanExecAdapter extends Logging{
       dataFilters: Seq[Filter],
       tableIdentifier: Option[TableIdentifier]): FileSourceScanExec = {
     val optimizedRelation =
-      OptimizedHadoopFsRelation(relation, partitionFilters, dataFilters, outputSchema)
+      HadoopFsRelationOptimizer.optimize(relation, partitionFilters, dataFilters, outputSchema)
     FileSourceScanExec(
       optimizedRelation,
       output,
