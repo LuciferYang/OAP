@@ -214,9 +214,7 @@ class FilterSuite extends QueryTest with SharedOapContext with BeforeAndAfterEac
     withIndex(TestIndex("parquet_test", "index1")) {
       sql("create oindex index1 on parquet_test (a)")
 
-      sql("SELECT * FROM parquet_test WHERE b = '1'").collect()
-
-      sql("SELECT b FROM parquet_test WHERE b = '1'").collect()
+      sql("SELECT * FROM parquet_test WHERE b = '1'")
 
       checkAnswer(sql("SELECT * FROM parquet_test WHERE a = 1"),
         Row(1, "this is test 1") :: Nil)
