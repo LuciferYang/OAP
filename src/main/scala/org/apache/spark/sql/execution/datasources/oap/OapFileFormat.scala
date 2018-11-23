@@ -205,14 +205,14 @@ private[sql] class OapFileFormat extends FileFormat
    * @return
    */
   def hasAvailableIndex(
-      dataFilters: Seq[Filter],
+      expressions: Seq[Expression],
       requiredTypes: Seq[IndexType] = Nil): Boolean = {
-    if (dataFilters.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
+    if (expressions.nonEmpty && sparkSession.conf.get(OapConf.OAP_ENABLE_OINDEX)) {
       meta match {
         case Some(m) if requiredTypes.isEmpty =>
-          dataFilters.exists(m.isSupportedByIndex(_, None))
-        case Some(m) if requiredTypes.length == dataFilters.length =>
-          dataFilters.zip(requiredTypes).exists{ x =>
+          expressions.exists(m.isSupportedByIndex(_, None))
+        case Some(m) if requiredTypes.length == expressions.length =>
+          expressions.zip(requiredTypes).exists{ x =>
             val expression = x._1
             val requirement = Some(x._2)
             m.isSupportedByIndex(expression, requirement)
