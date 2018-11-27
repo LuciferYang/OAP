@@ -31,9 +31,7 @@ import org.apache.spark.sql.types.{AtomicType, StructType}
 object HadoopFsRelationOptimizer extends Logging {
 
   def optimize(relation: HadoopFsRelation, partitionFilters: Seq[Expression],
-      pushedDownFilters: Seq[Filter], outputSchema: StructType): HadoopFsRelation = {
-    val selectedPartitions = relation.location.listFiles(partitionFilters)
-
+      pushedDownFilters: Seq[Filter], outputSchema: StructType): HadoopFsRelation =
     relation.fileFormat match {
       case _: ReadOnlyParquetFileFormat =>
         logInfo("index operation for parquet, retain ReadOnlyParquetFileFormat.")
@@ -51,6 +49,7 @@ object HadoopFsRelationOptimizer extends Logging {
         if relation.sparkSession.conf.get(OapConf.OAP_PARQUET_ENABLED) =>
 
         val optimizedParquetFileFormat = new OptimizedParquetFileFormat
+        val selectedPartitions = relation.location.listFiles(partitionFilters)
         optimizedParquetFileFormat
           .init(relation.sparkSession,
             relation.options,
@@ -89,6 +88,7 @@ object HadoopFsRelationOptimizer extends Logging {
       case _: OrcFileFormat
         if relation.sparkSession.conf.get(OapConf.OAP_ORC_ENABLED) =>
         val optimizedOrcFileFormat = new OptimizedOrcFileFormat
+        val selectedPartitions = relation.location.listFiles(partitionFilters)
         optimizedOrcFileFormat
           .init(relation.sparkSession,
             relation.options,
@@ -112,6 +112,7 @@ object HadoopFsRelationOptimizer extends Logging {
         }
 
       case _: OapFileFormat =>
+        val selectedPartitions = relation.location.listFiles(partitionFilters)
         relation.fileFormat.asInstanceOf[OapFileFormat].init(
           relation.sparkSession,
           relation.options,
@@ -121,5 +122,4 @@ object HadoopFsRelationOptimizer extends Logging {
       case _: FileFormat =>
         relation
     }
-  }
 }
