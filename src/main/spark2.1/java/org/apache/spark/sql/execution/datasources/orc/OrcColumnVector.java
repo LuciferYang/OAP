@@ -15,17 +15,20 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.datasources.oap.orc;
+package org.apache.spark.sql.execution.datasources.orc;
 
 import java.math.BigDecimal;
 
-import org.apache.orc.storage.ql.exec.vector.*;
-
+import org.apache.orc.storage.ql.exec.vector.BytesColumnVector;
+import org.apache.orc.storage.ql.exec.vector.ColumnVector;
+import org.apache.orc.storage.ql.exec.vector.DecimalColumnVector;
+import org.apache.orc.storage.ql.exec.vector.DoubleColumnVector;
+import org.apache.orc.storage.ql.exec.vector.LongColumnVector;
+import org.apache.orc.storage.ql.exec.vector.TimestampColumnVector;
+import org.apache.spark.sql.execution.vectorized.ReadOnlyColumnVector;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.sql.types.TimestampType;
-import org.apache.spark.sql.vectorized.oap.orc.ColumnarArray;
-import org.apache.spark.sql.vectorized.oap.orc.ColumnarMap;
 import org.apache.spark.unsafe.types.UTF8String;
 
 /**
@@ -33,7 +36,7 @@ import org.apache.spark.unsafe.types.UTF8String;
  * Spark's vectorized.ColumnVector, this column vector is used to adapt Hive ColumnVector with
  * Spark ColumnarVector.
  */
-public class OrcColumnVector extends org.apache.spark.sql.vectorized.oap.orc.ColumnVector {
+public class OrcColumnVector extends ReadOnlyColumnVector {
   private ColumnVector baseData;
   private LongColumnVector longData;
   private DoubleColumnVector doubleData;
@@ -78,7 +81,6 @@ public class OrcColumnVector extends org.apache.spark.sql.vectorized.oap.orc.Col
 
   }
 
-  @Override
   public boolean hasNull() {
     return !baseData.noNulls;
   }
@@ -174,20 +176,5 @@ public class OrcColumnVector extends org.apache.spark.sql.vectorized.oap.orc.Col
     byte[] binary = new byte[bytesData.length[index]];
     System.arraycopy(bytesData.vector[index], bytesData.start[index], binary, 0, binary.length);
     return binary;
-  }
-
-  @Override
-  public ColumnarArray getArray(int rowId) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public ColumnarMap getMap(int rowId) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public org.apache.spark.sql.vectorized.oap.orc.ColumnVector getChild(int ordinal) {
-    throw new UnsupportedOperationException();
   }
 }

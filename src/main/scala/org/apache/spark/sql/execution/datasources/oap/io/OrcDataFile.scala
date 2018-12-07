@@ -26,22 +26,21 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.RecordReader
 import org.apache.orc._
 import org.apache.orc.mapred.OrcStruct
-import org.apache.orc.mapreduce._
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.OapException
 import org.apache.spark.sql.execution.datasources.oap.filecache._
-import org.apache.spark.sql.execution.datasources.oap.orc.{IndexedOrcColumnarBatchReader, IndexedOrcMapreduceRecordReader, OrcColumnarBatchReader, OrcMapreduceRecordReader}
+import org.apache.spark.sql.execution.datasources.oap.orc.{IndexedOrcMapreduceRecordReader, OrcMapreduceRecordReader}
+import org.apache.spark.sql.execution.datasources.orc.{IndexedOrcColumnarBatchReader, VectorizedOrcRecordReader}
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types._
-import org.apache.spark.util.CompletionIterator
 
 /**
  * OrcDataFile is using below four record readers to read orc data file.
  *
  * For vectorization, one is with oap index while the other is without oap index.
- * The above two readers are OrcColumnarBatchReader and extended
+ * The above two readers are VectorizedOrcRecordReader and extended
  * IndexedOrcColumnarBatchReader.
  *
  * For no vectorization, similarly one is with oap index while the other is without oap index.
@@ -76,7 +75,7 @@ private[oap] case class OrcDataFile(
     val iterator = context.returningBatch match {
       case true =>
         initVectorizedReader(context,
-          new OrcColumnarBatchReader(context.enableOffHeapColumnVector, context.copyToSpark))
+          new VectorizedOrcRecordReader(context.enableOffHeapColumnVector, context.copyToSpark))
       case false =>
         initRecordReader(
           new OrcMapreduceRecordReader[OrcStruct](filePath, configuration))
@@ -108,7 +107,7 @@ private[oap] case class OrcDataFile(
     this.context = context
 
   private def initVectorizedReader(c: OrcDataFileContext,
-      reader: OrcColumnarBatchReader) = {
+      reader: VectorizedOrcRecordReader) = {
     reader.initialize(filePath, configuration)
     reader.initBatch(fileReader.getSchema, c.requestedColIds, c.requiredSchema.fields,
       c.partitionColumns, c.partitionValues)

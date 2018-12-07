@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.datasources.oap.orc;
+package org.apache.spark.sql.execution.datasources.orc;
 
 import java.io.IOException;
 
@@ -26,7 +26,7 @@ import org.apache.hadoop.fs.Path;
  * The OapIndexOrcColumnarBatchReader class has rowIds in order to scan the data
  * from the predefined row ids.
  */
-public class IndexedOrcColumnarBatchReader extends OrcColumnarBatchReader {
+public class IndexedOrcColumnarBatchReader extends VectorizedOrcRecordReader {
 
   /* Below three fields are added by Oap index.
    * rowIds is assumed to be sorted in ascending order. The oap index will provide it.

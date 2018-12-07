@@ -15,9 +15,10 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.datasources.oap.orc;
+package org.apache.spark.sql.execution.datasources.orc;
 
 import java.io.IOException;
+import java.util.stream.IntStream;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -36,13 +37,12 @@ import org.apache.orc.storage.serde2.io.HiveDecimalWritable;
 
 import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.vectorized.oap.orc.ColumnVectorUtils;
-import org.apache.spark.sql.vectorized.oap.orc.OffHeapColumnVector;
-import org.apache.spark.sql.vectorized.oap.orc.OnHeapColumnVector;
-import org.apache.spark.sql.vectorized.oap.orc.WritableColumnVector;
+import org.apache.spark.sql.execution.vectorized.ColumnVectorUtils;
+import org.apache.spark.sql.execution.vectorized.OffHeapColumnVector;
+import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector;
+import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.*;
-import org.apache.spark.sql.vectorized.oap.orc.ColumnarBatch;
-
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 /**
  * This class is a copy of OrcColumnarBatchReader with minor changes to be able to
@@ -54,7 +54,7 @@ import org.apache.spark.sql.vectorized.oap.orc.ColumnarBatch;
  * To support vectorization in WholeStageCodeGen, this reader returns ColumnarBatch.
  * After creating, `initialize` and `initBatch` should be called sequentially.
  */
-public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
+public class VectorizedOrcRecordReader extends RecordReader<Void, ColumnarBatch> {
   // TODO: make this configurable.
   private static final int CAPACITY = 4 * 1024;
 
@@ -65,29 +65,29 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
    * The column IDs of the physical ORC file schema which are required by this reader.
    * -1 means this required column doesn't exist in the ORC file.
    */
-  protected int[] requestedColIds;
+  private int[] requestedColIds;
 
   // Record reader from ORC row batch.
   protected org.apache.orc.RecordReader recordReader;
 
-  protected StructField[] requiredFields;
+  private StructField[] requiredFields;
 
   // The result columnar batch for vectorized execution by whole-stage codegen.
   protected ColumnarBatch columnarBatch;
 
   // Writable column vectors of the result columnar batch.
-  protected WritableColumnVector[] columnVectors;
+  private WritableColumnVector[] columnVectors;
 
   // The wrapped ORC column vectors. It should be null if `copyToSpark` is true.
-  protected org.apache.spark.sql.vectorized.oap.orc.ColumnVector[] orcVectorWrappers;
+  private org.apache.spark.sql.vectorized.ColumnVector[] orcVectorWrappers;
 
   // The memory mode of the columnarBatch
-  protected final MemoryMode MEMORY_MODE;
+  private final MemoryMode MEMORY_MODE;
 
   // Whether or not to copy the ORC columnar batch to Spark columnar batch.
-  protected final boolean copyToSpark;
+  private final boolean copyToSpark;
 
-  public OrcColumnarBatchReader(boolean useOffHeap, boolean copyToSpark) {
+  public VectorizedOrcRecordReader(boolean useOffHeap, boolean copyToSpark) {
     MEMORY_MODE = useOffHeap ? MemoryMode.OFF_HEAP : MemoryMode.ON_HEAP;
     this.copyToSpark = copyToSpark;
   }
@@ -198,7 +198,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     } else {
       // Just wrap the ORC column vector instead of copying it to Spark column vector.
       orcVectorWrappers =
-        new org.apache.spark.sql.vectorized.oap.orc.ColumnVector[resultSchema.length()];
+        new org.apache.spark.sql.vectorized.ColumnVector[resultSchema.length()];
 
       for (int i = 0; i < requiredFields.length; i++) {
         DataType dt = requiredFields[i].dataType();
@@ -231,7 +231,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
 
   // Below common code is extracted by oap index from the original nextBatch method.
   // The child class IndexedOrcColumnarBatchReader will use it as well.
-  protected boolean readToColumnVectors(int batchSize) {
+  boolean readToColumnVectors(int batchSize) {
     if (!copyToSpark) {
       for (int i = 0; i < requiredFields.length; i++) {
         if (requestedColIds[i] != -1) {
@@ -280,7 +280,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     return readToColumnVectors(batchSize);
   }
 
-  protected void putRepeatingValues(
+  private void putRepeatingValues(
       int batchSize,
       StructField field,
       ColumnVector fromColumn,
@@ -328,7 +328,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     }
   }
 
-  protected void putNonNullValues(
+  private void putNonNullValues(
       int batchSize,
       StructField field,
       ColumnVector fromColumn,
@@ -371,10 +371,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     } else if (type instanceof StringType || type instanceof BinaryType) {
       BytesColumnVector data = ((BytesColumnVector)fromColumn);
       WritableColumnVector arrayData = toColumn.arrayData();
-      int totalNumBytes = 0;
-      for (int index = 0; index < batchSize; index++) {
-        totalNumBytes += data.length[index];
-      }
+      int totalNumBytes = IntStream.of(data.length).sum();
       arrayData.reserve(totalNumBytes);
       for (int index = 0, pos = 0; index < batchSize; pos += data.length[index], index++) {
         arrayData.putBytes(pos, data.length[index], data.vector[index], data.start[index]);
@@ -399,7 +396,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     }
   }
 
-  protected void putValues(
+  private void putValues(
       int batchSize,
       StructField field,
       ColumnVector fromColumn,
@@ -480,10 +477,7 @@ public class OrcColumnarBatchReader extends RecordReader<Void, ColumnarBatch> {
     } else if (type instanceof StringType || type instanceof BinaryType) {
       BytesColumnVector vector = (BytesColumnVector)fromColumn;
       WritableColumnVector arrayData = toColumn.arrayData();
-      int totalNumBytes = 0;
-      for (int index = 0; index < batchSize; index++) {
-        totalNumBytes += vector.length[index];
-      }
+      int totalNumBytes = IntStream.of(vector.length).sum();
       arrayData.reserve(totalNumBytes);
       for (int index = 0, pos = 0; index < batchSize; pos += vector.length[index], index++) {
         if (fromColumn.isNull[index]) {
