@@ -929,17 +929,17 @@ public abstract class ColumnVector implements AutoCloseable {
   /**
    * If this is a nested type (array or struct), the column for the child data.
    */
-  protected ColumnVector[] childColumns;
+  protected final ColumnVector[] childColumns;
 
   /**
    * Reusable Array holder for getArray().
    */
-  protected Array resultArray;
+  protected final Array resultArray;
 
   /**
    * Reusable Struct holder for getStruct().
    */
-  protected ColumnarBatch.Row resultStruct;
+  protected final ColumnarBatch.Row resultStruct;
 
   /**
    * The Dictionary for this column.
@@ -1028,12 +1028,5 @@ public abstract class ColumnVector implements AutoCloseable {
       this.resultArray = null;
       this.resultStruct = null;
     }
-  }
-
-  /**
-   * Sets up the data type of this column vector.
-   */
-  protected ColumnVector(DataType type) {
-    this.type = type;
   }
 }

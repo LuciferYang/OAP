@@ -17,12 +17,13 @@
 
 package org.apache.spark.sql.execution.vectorized;
 
+import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.types.DataType;
 
 public abstract class ReadOnlyColumnVector extends ColumnVector {
 
   protected ReadOnlyColumnVector(DataType type) {
-    super(type);
+    super(0, type, MemoryMode.ON_HEAP);
   }
 
   @Override
