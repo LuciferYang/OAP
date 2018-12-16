@@ -704,7 +704,6 @@
             <configuration>
               <excludes>
                 <exclude>src/main/spark2.3</exclude>
-                <exclude>src/test/spark2.3</exclude>
               </excludes>
             </configuration>
           </plugin>
