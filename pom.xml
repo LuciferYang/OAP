@@ -36,6 +36,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.useIncrementalCompilation>false</maven.compiler.useIncrementalCompilation>
     <basedir>./</basedir>
+    <exec.maven.version>1.6.0</exec.maven.version>
   </properties>
 
   <repositories>
@@ -787,7 +788,7 @@
           <plugin>
             <artifactId>exec-maven-plugin</artifactId>
             <groupId>org.codehaus.mojo</groupId>
-            <version>1.6.0</version>
+            <version>${exec.maven.version}</version>
             <executions>
               <execution>
                 <id>Compile native code and produce share library</id>
