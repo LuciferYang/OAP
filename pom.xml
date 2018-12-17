@@ -17,7 +17,7 @@
 
   <groupId>com.intel.ssg.bdt</groupId>
   <artifactId>oap</artifactId>
-  <version>0.5.0-SNAPSHOT</version>
+  <version>0.6.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>OAP</name>
@@ -595,81 +595,6 @@
         <activeByDefault>true</activeByDefault>
       </activation>
       <properties>
-        <spark.version>2.3.0</spark.version>
-        <spark.internal.version>2.3.0</spark.internal.version>
-        <scala.version>2.11.8</scala.version>
-        <scala.binary.version>2.11</scala.binary.version>
-        <java.version>1.8</java.version>
-        <antlr.version>4.7</antlr.version>
-        <scalatest.version>3.0.3</scalatest.version>
-        <scalacheck.version>1.13.5</scalacheck.version>
-        <parquet.version>1.8.3</parquet.version>
-      </properties>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.antlr</groupId>
-            <artifactId>antlr4-maven-plugin</artifactId>
-            <version>${antlr.version}</version>
-            <executions>
-              <execution>
-                <goals>
-                  <goal>antlr4</goal>
-                </goals>
-              </execution>
-            </executions>
-            <configuration>
-              <visitor>true</visitor>
-              <sourceDirectory>src/main/spark2.3/antlr4</sourceDirectory>
-            </configuration>
-          </plugin>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-compiler-plugin</artifactId>
-            <configuration>
-              <excludes>
-                <exclude>src/main/spark2.3.2</exclude>
-                <exclude>src/test/spark2.3.2</exclude>
-              </excludes>
-            </configuration>
-          </plugin>
-          <plugin>
-            <groupId>org.codehaus.mojo</groupId>
-            <artifactId>build-helper-maven-plugin</artifactId>
-            <version>3.0.0</version>
-            <executions>
-              <execution>
-                <id>add-source</id>
-                <phase>generate-sources</phase>
-                <goals>
-                  <goal>add-source</goal>
-                </goals>
-                <configuration>
-                  <sources>
-                    <source>src/main/spark2.3</source>
-                  </sources>
-                </configuration>
-              </execution>
-              <execution>
-                <id>add-test-source</id>
-                <phase>generate-sources</phase>
-                <goals>
-                  <goal>add-test-source</goal>
-                </goals>
-                <configuration>
-                  <sources>
-                    <source>src/test/spark2.3</source>
-                  </sources>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-    <profile>
-      <id>spark-2.3.2</id>
-      <properties>
         <spark.version>2.3.2</spark.version>
         <spark.internal.version>2.3.2</spark.internal.version>
         <scala.version>2.11.8</scala.version>
@@ -701,11 +626,6 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-compiler-plugin</artifactId>
-            <configuration>
-              <excludes>
-                <exclude>src/main/spark2.3</exclude>
-              </excludes>
-            </configuration>
           </plugin>
           <plugin>
             <groupId>org.codehaus.mojo</groupId>
@@ -721,6 +641,7 @@
                 <configuration>
                   <sources>
                     <source>src/main/spark2.3.2</source>
+                    <source>src/main/spark2.3</source>
                   </sources>
                 </configuration>
               </execution>
