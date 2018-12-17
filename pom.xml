@@ -36,9 +36,7 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     <maven.compiler.useIncrementalCompilation>false</maven.compiler.useIncrementalCompilation>
     <basedir>./</basedir>
-    <jetty.version>9.2.16.v20160414</jetty.version>
     <exec.maven.version>1.6.0</exec.maven.version>
-    <scala.version>2.11.8</scala.version>
   </properties>
 
   <repositories>
