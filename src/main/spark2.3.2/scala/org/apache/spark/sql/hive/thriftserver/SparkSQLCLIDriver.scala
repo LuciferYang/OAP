@@ -315,6 +315,7 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
   // Force initializing SparkSQLEnv. This is put here but not object SparkSQLCliDriver
   // because the Hive unit tests do not go through the main() code path.
   if (!isRemoteMode) {
+    // for OAP
     OapEnv.init()
   } else {
     // Hive 1.2 + not supported in CLI
