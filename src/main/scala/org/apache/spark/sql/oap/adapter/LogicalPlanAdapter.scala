@@ -17,9 +17,9 @@
 
 package org.apache.spark.sql.oap.adapter
 
-import org.apache.spark.sql.catalyst.plans.logical.{Statistics, LogicalPlan}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Statistics}
 import org.apache.spark.sql.internal.SQLConf
 
 object LogicalPlanAdapter {
-  def getStatistics(plan: LogicalPlan, conf:SQLConf): Statistics = plan.stats
+  def getStatistics(plan: LogicalPlan, conf: SQLConf): Statistics = plan.stats
 }

@@ -18,12 +18,13 @@
 package org.apache.spark.sql.oap.adapter
 
 import org.apache.parquet.hadoop.VectorizedOapRecordReader
+
 import org.apache.spark.sql.vectorized.ColumnarBatch
 
 object CapacityAdapter {
   /**
-    * Returns batch CAPACITY
-    */
+   * Returns batch CAPACITY
+   */
   def getCapacity(columnarBatch: ColumnarBatch): Int = {
     VectorizedOapRecordReader.CAPACITY
   }
