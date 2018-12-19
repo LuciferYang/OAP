@@ -17,13 +17,13 @@
 
 package org.apache.spark.sql.execution.datasources.oap.adapter
 
-object WholeStageCodeGenAdapter {
+import org.scalacheck.{Prop, Properties}
+
+object PropertiesAdapter {
   /**
-    * Enable WholeStageCodeGen, explains of Sql plans has changed in the spark2.3 version.
-    * Ignore it in the spark2.1, spark2.2 version
-    */
-  def getKeywordPrefix(): String = {
-    "*(1) "
-  }
+   * The Properties has changed in the spark2.3 version.
+   * Ignore it in the spark2.1, spark2.2 version
+   */
+  def getProp(properties: Properties): Prop = Prop.all(properties.properties.map(_._2): _*)
 
 }
