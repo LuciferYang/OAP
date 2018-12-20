@@ -45,6 +45,7 @@
     <scalacheck.version>1.13.5</scalacheck.version>
     <parquet.version>1.8.3</parquet.version>
     <jetty.version>9.3.24.v20180605</jetty.version>
+    <!--diff: Spark-2.3.2 use orc 1.4.4 -->
     <orc.version>1.5.2</orc.version>
     <exec.maven.version>1.6.0</exec.maven.version>
   </properties>
@@ -185,7 +186,7 @@
     <dependency>
       <groupId>com.fasterxml.jackson.module</groupId>
       <artifactId>jackson-module-scala_${scala.binary.version}</artifactId>
-      <version>2.6.5</version>
+      <version>2.6.7.1</version>
       <scope>compile</scope>
     </dependency>
     <dependency>
@@ -495,15 +496,14 @@
             <jvmArgs>
               <jvmArg>-Xms1024m</jvmArg>
               <jvmArg>-Xmx1024m</jvmArg>
-              <jvmArg>-XX:PermSize=2g</jvmArg>
-              <jvmArg>-XX:MaxPermSize=5g</jvmArg>
+              <jvmArg>-XX:ReservedCodeCacheSize=512m</jvmArg>
             </jvmArgs>
             <javacArgs>
               <javacArg>-source</javacArg>
               <javacArg>${java.version}</javacArg>
               <javacArg>-target</javacArg>
               <javacArg>${java.version}</javacArg>
-              <javacArg>-Xlint:all,-serial,-path</javacArg>
+              <javacArg>-Xlint:all,-serial,-pathgit</javacArg>
             </javacArgs>
           </configuration>
         </plugin>
