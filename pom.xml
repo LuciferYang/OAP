@@ -503,7 +503,7 @@
               <javacArg>${java.version}</javacArg>
               <javacArg>-target</javacArg>
               <javacArg>${java.version}</javacArg>
-              <javacArg>-Xlint:all,-serial,-pathgit</javacArg>
+              <javacArg>-Xlint:all,-serial,-path</javacArg>
             </javacArgs>
           </configuration>
         </plugin>
