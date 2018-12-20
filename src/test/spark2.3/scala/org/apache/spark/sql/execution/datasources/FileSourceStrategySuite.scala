@@ -25,7 +25,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{BlockLocation, FileStatus, Path, RawLocalFileSystem}
 import org.apache.hadoop.mapreduce.Job
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
@@ -35,17 +35,14 @@ import org.apache.spark.sql.execution.{DataSourceScanExec, SparkPlan}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources._
-import org.apache.spark.sql.test.oap.SharedOapContext
+import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.util.Utils
 
-class FileSourceStrategySuite extends QueryTest with SharedOapContext with PredicateHelper {
+class FileSourceStrategySuite extends QueryTest with SharedSQLContext with PredicateHelper {
   import testImplicits._
-  oapSparkConf.set("spark.default.parallelism", "1")
 
-  // Override afterEach because we don't want to check open streams
-  override def beforeEach(): Unit = {}
-  override def afterEach(): Unit = {}
+  protected override def sparkConf = super.sparkConf.set("spark.default.parallelism", "1")
 
   test("unpartitioned table, single partition") {
     val table =
@@ -88,7 +85,7 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
       checkScan(table.select('c1)) { partitions =>
         // 5 byte files should be laid out [(5, 5), (5)]
         assert(partitions.size == 2, "when checking partitions")
-        assert(partitions.head.files.size == 2, "when checking partition 1")
+        assert(partitions(0).files.size == 2, "when checking partition 1")
         assert(partitions(1).files.size == 1, "when checking partition 2")
 
         // 5 byte files are too small to split so we should read the whole thing.
@@ -113,7 +110,7 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
       checkScan(table.select('c1)) { partitions =>
         // Files should be laid out [(0-10), (10-15, 4)]
         assert(partitions.size == 2, "when checking partitions")
-        assert(partitions.head.files.size == 1, "when checking partition 1")
+        assert(partitions(0).files.size == 1, "when checking partition 1")
         assert(partitions(1).files.size == 2, "when checking partition 2")
 
         // Start by reading 10 bytes of the first file
@@ -146,30 +143,30 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
       checkScan(table.select('c1)) { partitions =>
         // Files should be laid out [(file1), (file2, file3), (file4, file5), (file6)]
         assert(partitions.size == 4, "when checking partitions")
-        assert(partitions.head.files.size == 1, "when checking partition 1")
+        assert(partitions(0).files.size == 1, "when checking partition 1")
         assert(partitions(1).files.size == 2, "when checking partition 2")
         assert(partitions(2).files.size == 2, "when checking partition 3")
         assert(partitions(3).files.size == 1, "when checking partition 4")
 
         // First partition reads (file1)
-        assert(partitions.head.files.head.start == 0)
-        assert(partitions.head.files.head.length == 2)
+        assert(partitions(0).files(0).start == 0)
+        assert(partitions(0).files(0).length == 2)
 
         // Second partition reads (file2, file3)
-        assert(partitions(1).files.head.start == 0)
-        assert(partitions(1).files.head.length == 2)
+        assert(partitions(1).files(0).start == 0)
+        assert(partitions(1).files(0).length == 2)
         assert(partitions(1).files(1).start == 0)
         assert(partitions(1).files(1).length == 1)
 
         // Third partition reads (file4, file5)
-        assert(partitions(2).files.head.start == 0)
-        assert(partitions(2).files.head.length == 1)
+        assert(partitions(2).files(0).start == 0)
+        assert(partitions(2).files(0).length == 1)
         assert(partitions(2).files(1).start == 0)
         assert(partitions(2).files(1).length == 1)
 
         // Final partition reads (file6)
-        assert(partitions(3).files.head.start == 0)
-        assert(partitions(3).files.head.length == 1)
+        assert(partitions(3).files(0).start == 0)
+        assert(partitions(3).files(0).length == 1)
       }
 
       checkPartitionSchema(StructType(Nil))
@@ -267,16 +264,16 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
     // No partition pruning
     checkScan(table) { partitions =>
       assert(partitions.size == 3)
-      assert(partitions.head.files.size == 5)
-      assert(partitions(1).files.isEmpty)
+      assert(partitions(0).files.size == 5)
+      assert(partitions(1).files.size == 0)
       assert(partitions(2).files.size == 2)
     }
 
     // With partition pruning
     checkScan(table.where("p1=2")) { partitions =>
       assert(partitions.size == 3)
-      assert(partitions.head.files.size == 3)
-      assert(partitions(1).files.isEmpty)
+      assert(partitions(0).files.size == 3)
+      assert(partitions(1).files.size == 0)
       assert(partitions(2).files.size == 1)
     }
   }
@@ -291,7 +288,7 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
 
     val fakeRDD = new FileScanRDD(
       spark,
-      (_: PartitionedFile) => Iterator.empty,
+      (file: PartitionedFile) => Iterator.empty,
       Seq(partition)
     )
 
@@ -353,14 +350,14 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
     // Check if a non-splittable file is not assigned into partitions
     Seq("gz", "snappy", "lz4").foreach { suffix =>
        val table = createTable(
-        files = Seq(s"file1.$suffix" -> 3, s"file2.$suffix" -> 1, s"file3.$suffix" -> 1)
+        files = Seq(s"file1.${suffix}" -> 3, s"file2.${suffix}" -> 1, s"file3.${suffix}" -> 1)
       )
       withSQLConf(
         SQLConf.FILES_MAX_PARTITION_BYTES.key -> "2",
         SQLConf.FILES_OPEN_COST_IN_BYTES.key -> "0") {
         checkScan(table.select('c1)) { partitions =>
           assert(partitions.size == 2)
-          assert(partitions.head.files.size == 1)
+          assert(partitions(0).files.size == 1)
           assert(partitions(1).files.size == 2)
         }
       }
@@ -369,14 +366,14 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
     // Check if a splittable compressed file is assigned into multiple partitions
     Seq("bz2").foreach { suffix =>
        val table = createTable(
-         files = Seq(s"file1.$suffix" -> 3, s"file2.$suffix" -> 1, s"file3.$suffix" -> 1)
+         files = Seq(s"file1.${suffix}" -> 3, s"file2.${suffix}" -> 1, s"file3.${suffix}" -> 1)
       )
       withSQLConf(
         SQLConf.FILES_MAX_PARTITION_BYTES.key -> "2",
         SQLConf.FILES_OPEN_COST_IN_BYTES.key -> "0") {
         checkScan(table.select('c1)) { partitions =>
           assert(partitions.size == 3)
-          assert(partitions.head.files.size == 1)
+          assert(partitions(0).files.size == 1)
           assert(partitions(1).files.size == 2)
           assert(partitions(2).files.size == 1)
         }
@@ -402,7 +399,7 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
 
         val fileCatalog = new InMemoryFileIndex(
           sparkSession = spark,
-          Seq(new Path(tempDir)),
+          rootPathsSpecified = Seq(new Path(tempDir)),
           parameters = Map.empty[String, String],
           partitionSchema = None)
         // This should not fail.
@@ -434,7 +431,7 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
   }
 
   test("[SPARK-16818] exchange reuse respects differences in partition pruning") {
-    spark.conf.set("spark.sql.exchange.reuse", value = true)
+    spark.conf.set("spark.sql.exchange.reuse", true)
     withTempPath { path =>
       val tempDir = path.getCanonicalPath
       spark.range(10)
@@ -496,11 +493,11 @@ class FileSourceStrategySuite extends QueryTest with SharedOapContext with Predi
 
   // Helpers for checking the arguments passed to the FileFormat.
 
-  protected val checkPartitionSchema: StructType => Unit =
+  protected val checkPartitionSchema =
     checkArgument("partition schema", _.partitionSchema, _: StructType)
-  protected val checkDataSchema: StructType => Unit =
+  protected val checkDataSchema =
     checkArgument("data schema", _.dataSchema, _: StructType)
-  protected val checkDataFilters: Set[Filter] => Unit =
+  protected val checkDataFilters =
     checkArgument("data filters", _.filters.toSet, _: Set[Filter])
 
   /** Helper for building checks on the arguments passed to the reader. */
@@ -635,7 +632,7 @@ class TestFileFormat extends TextBasedFileFormat {
     LastArguments.filters = filters
     LastArguments.options = options
 
-    (_: PartitionedFile) => { Iterator.empty }
+    (file: PartitionedFile) => { Iterator.empty }
   }
 }
 
@@ -661,9 +658,3 @@ class MockDistributedFileSystem extends RawLocalFileSystem {
     super.getFileBlockLocations(file, start, len)
   }
 }
-
-
-
-
-
-
