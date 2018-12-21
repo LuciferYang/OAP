@@ -114,7 +114,8 @@ object FileSourceStrategy extends Strategy with Logging {
           logInfo("index operation for parquet, retain ReadOnlyParquetFileFormat.")
           _fsRelation
         case _: ReadOnlyOrcFileFormat | _: ReadOnlyNativeOrcFileFormat =>
-          logInfo("index operation for orc, retain ReadOnlyOrcFileFormat.")
+          logInfo("index operation for orc, retain ReadOnlyOrcFileFormat or " +
+            "ReadOnlyNativeOrcFileFormat.")
           _fsRelation
         // There are two scenarios will use OptimizedParquetFileFormat:
         // 1. canUseCache: OAP_PARQUET_ENABLED is true and OAP_PARQUET_DATA_CACHE_ENABLED is true
