@@ -19,8 +19,6 @@ package org.apache.spark.sql.execution.datasources.oap.io
 
 import java.io.Closeable
 
-import scala.collection.JavaConverters._
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.util.StringUtils
@@ -30,12 +28,12 @@ import org.apache.parquet.hadoop.api.RecordReader
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow
-import org.apache.spark.sql.execution.datasources.oap.filecache._
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupportWrapper
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.StructType
 
 /**
  * ParquetDataFile use xxRecordReader read Parquet Data File,
@@ -60,6 +58,7 @@ import org.apache.spark.sql.types._
  *   in rowIds, it slow than IndexedVectorizedOapRecordReader, but can read all data types
  *   not just AtomicType data.</p></li>
  * </ol>
+ *
  * @param path data file path
  * @param schema parquet data file schema
  * @param configuration hadoop configuration
@@ -109,6 +108,7 @@ private[oap] case class ParquetDataFile(
     filters: Seq[Filter] = Nil): OapCompletionIterator[Any] = {
     val iterator = context match {
       case Some(c) =>
+        import scala.collection.JavaConverters._
         // Parquet RowGroupCount can more than Int.MaxValue,
         // in that sence we should not cache data in memory
         // and rollback to read this rowgroup from file directly.
@@ -141,6 +141,7 @@ private[oap] case class ParquetDataFile(
     } else {
       val iterator = context match {
         case Some(c) =>
+          import scala.collection.JavaConverters._
           // Parquet RowGroupCount can more than Int.MaxValue,
           // in that sence we should not cache data in memory
           // and rollback to read this rowgroup from file directly.

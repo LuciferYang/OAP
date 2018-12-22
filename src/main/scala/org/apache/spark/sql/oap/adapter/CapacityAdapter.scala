@@ -17,9 +17,13 @@
 
 package org.apache.spark.sql.oap.adapter
 
-import org.apache.spark.sql.catalyst.plans.logical.{Statistics, LogicalPlan}
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.vectorized.ColumnarBatch
 
-object LogicalPlanAdapter {
-  def getStatistics(plan: LogicalPlan, conf:SQLConf): Statistics = plan.statistics
+object CapacityAdapter {
+  /**
+   * Returns batch CAPACITY
+   */
+  def getCapacity(columnarBatch: ColumnarBatch): Int = {
+    columnarBatch.capacity()
+  }
 }

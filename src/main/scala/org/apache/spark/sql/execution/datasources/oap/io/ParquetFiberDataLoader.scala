@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.spark.sql.execution.datasources.oap.io
 
 import java.io.IOException
@@ -28,7 +29,7 @@ import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.parquet.{ParquetReadSupportWrapper, VectorizedColumnReader}
 import org.apache.spark.sql.execution.vectorized.{ColumnVector, OnHeapColumnVector}
-import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.StructType
 
 /**
  * The main purpose of this loader is help to obtain

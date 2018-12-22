@@ -21,7 +21,6 @@ import scala.collection.mutable
 
 import org.apache.hadoop.fs.{FileSystem, Path, PathFilter}
 
-import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.scheduler.cluster.CoarseGrainedSchedulerBackend
