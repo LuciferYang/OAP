@@ -21,6 +21,7 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import org.apache.parquet.column.Dictionary;
+
 import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.unsafe.Platform;

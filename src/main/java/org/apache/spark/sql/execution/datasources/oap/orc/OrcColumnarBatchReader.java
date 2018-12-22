@@ -36,13 +36,12 @@ import org.apache.orc.storage.serde2.io.HiveDecimalWritable;
 
 import org.apache.spark.memory.MemoryMode;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.types.*;
 import org.apache.spark.sql.vectorized.oap.orc.ColumnVectorUtils;
+import org.apache.spark.sql.vectorized.oap.orc.ColumnarBatch;
 import org.apache.spark.sql.vectorized.oap.orc.OffHeapColumnVector;
 import org.apache.spark.sql.vectorized.oap.orc.OnHeapColumnVector;
 import org.apache.spark.sql.vectorized.oap.orc.WritableColumnVector;
-import org.apache.spark.sql.types.*;
-import org.apache.spark.sql.vectorized.oap.orc.ColumnarBatch;
-
 
 /**
  * This class is a copy of OrcColumnarBatchReader with minor changes to be able to

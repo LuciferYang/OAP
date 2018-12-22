@@ -21,8 +21,8 @@ import java.math.BigInteger;
 
 import com.google.common.annotations.VisibleForTesting;
 
-import org.apache.spark.sql.internal.oap.OapConf;
 import org.apache.spark.sql.internal.SQLConf;
+import org.apache.spark.sql.internal.oap.OapConf;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.unsafe.types.UTF8String;
 

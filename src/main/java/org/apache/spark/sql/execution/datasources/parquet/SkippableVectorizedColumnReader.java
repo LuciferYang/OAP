@@ -27,12 +27,12 @@ import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.page.PageReader;
 import org.apache.parquet.column.values.ValuesReader;
 
+import static org.apache.parquet.column.ValuesType.REPETITION_LEVEL;
+
 import org.apache.spark.sql.execution.vectorized.ColumnVector;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.DecimalType;
-
-import static org.apache.parquet.column.ValuesType.REPETITION_LEVEL;
 
 /**
  * Add skip values ability to VectorizedColumnReader, skip method refer to
