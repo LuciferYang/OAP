@@ -14,4 +14,3 @@ before_script:
 - cd ${TRAVIS_BUILD_DIR}
 script:
 - mvn clean -q -Pspark-2.1 -Ppersistent-memory test
-- mvn clean -q -Pspark-2.2 -Ppersistent-memory test
