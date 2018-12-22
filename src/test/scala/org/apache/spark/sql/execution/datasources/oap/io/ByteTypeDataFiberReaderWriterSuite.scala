@@ -18,15 +18,9 @@
 package org.apache.spark.sql.execution.datasources.oap.io
 
 import org.apache.parquet.column.Dictionary
-import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList
-import org.scalatest.BeforeAndAfterEach
 
-import org.apache.spark.SparkFunSuite
-import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryMode
-import org.apache.spark.sql.execution.datasources.oap.filecache.{FiberCache, TestFiberCache}
 import org.apache.spark.sql.execution.vectorized.{ColumnVector, OnHeapColumnVector}
-import org.apache.spark.sql.test.oap.SharedOapContext
 import org.apache.spark.sql.types.ByteType
 
 class ByteTypeDataFiberReaderWriterSuite extends DataFiberReaderWriterSuite {
