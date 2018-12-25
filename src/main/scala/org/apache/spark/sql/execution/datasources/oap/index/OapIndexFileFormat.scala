@@ -17,13 +17,15 @@
 
 package org.apache.spark.sql.execution.datasources.oap.index
 
+import java.util.concurrent.ConcurrentHashMap
+
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.mapreduce.{Job, TaskAttemptContext}
 import org.apache.parquet.hadoop.util.ContextUtil
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.execution.datasources.{FileFormat, OutputWriterFactory}
+import org.apache.spark.sql.execution.datasources.{FileFormat, OutputWriterFactory, WriteResult}
 import org.apache.spark.sql.execution.datasources.oap.OapFileFormat
 import org.apache.spark.sql.types.StructType
 
@@ -56,12 +58,18 @@ private[index] class OapIndexFileFormat
     configuration.set(OapIndexFileFormat.INDEX_TIME, options("indexTime"))
     configuration.set(OapIndexFileFormat.IS_APPEND, options("isAppend"))
 
-    new OutputWriterFactory {
+    new OutputWriterFactory() {
+
+      val jobId: Option[String] = options.get("indexDDLJobId")
+
       override def getFileExtension(context: TaskAttemptContext): String =
         OapFileFormat.OAP_INDEX_EXTENSION
 
       override def newInstance(path: String, dataSchema: StructType, context: TaskAttemptContext) =
         new OapIndexOutputWriter(path, context)
+
+      override def commitJob(taskResults: Array[WriteResult]): Unit =
+        jobId.foreach(OapIndexFileFormat.registerWriteResults(_, taskResults.toSeq))
     }
   }
 }
@@ -72,6 +80,13 @@ private[index] object OapIndexFileFormat {
   val INDEX_NAME: String = "org.apache.spark.sql.oap.index.name"
   val INDEX_TIME: String = "org.apache.spark.sql.oap.index.time"
   val IS_APPEND: String = "org.apache.spark.sql.oap.index.append"
+
+  private[this] val writeResultsMap = new ConcurrentHashMap[String, Seq[WriteResult]]()
+
+  def fetchAndRemoveWriteResults(jobId: String): Seq[WriteResult] = writeResultsMap.remove(jobId)
+
+  def registerWriteResults(jobId: String, writeResults: Seq[WriteResult]): Unit =
+    writeResultsMap.put(jobId, writeResults)
 }
 
 case class IndexBuildResult(dataFile: String, rowCount: Long, fingerprint: String, parent: String)

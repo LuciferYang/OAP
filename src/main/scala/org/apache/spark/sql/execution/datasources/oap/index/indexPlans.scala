@@ -189,9 +189,11 @@ case class CreateIndexCommand(
       outPutPath.makeQualified(fs.getUri, fs.getWorkingDirectory)
     }
 
+    val jobId = java.util.UUID.randomUUID().toString
+
     val committer = FileCommitProtocol.instantiate(
       sparkSession.sessionState.conf.fileCommitProtocolClass,
-      jobId = java.util.UUID.randomUUID().toString,
+      jobId = jobId,
       outputPath = outPutPath.toUri.getPath,
        false)
 
@@ -199,10 +201,11 @@ case class CreateIndexCommand(
       "indexName" -> indexName,
       "indexTime" -> time,
       "isAppend" -> "true",
-      "indexType" -> indexType.toString
+      "indexType" -> indexType.toString,
+      "indexDDLJobId" -> jobId
     )
 
-    val retVal = FileFormatWriter.write(
+    FileFormatWriter.write(
       sparkSession = sparkSession,
       ds.queryExecution.executedPlan,
       fileFormat = new OapIndexFileFormat,
@@ -213,7 +216,10 @@ case class CreateIndexCommand(
       Seq.empty, // partitionColumns
       bucketSpec = None,
       statsTrackers = Nil,
-      options = options)._1.asInstanceOf[Seq[Seq[IndexBuildResult]]]
+      options = options)
+
+    val retVal =
+      OapIndexFileFormat.fetchAndRemoveWriteResults(jobId).asInstanceOf[Seq[Seq[IndexBuildResult]]]
 
     val retMap = retVal.flatten.groupBy(_.parent)
     bAndP.foreach(bp =>
@@ -447,9 +453,11 @@ case class RefreshIndexCommand(
         outPutPath.makeQualified(fs.getUri, fs.getWorkingDirectory)
       }
 
+      val jobId = java.util.UUID.randomUUID().toString
+
       val committer = FileCommitProtocol.instantiate(
         sparkSession.sessionState.conf.fileCommitProtocolClass,
-        jobId = java.util.UUID.randomUUID().toString,
+        jobId = jobId,
         outputPath = outPutPath.toUri.getPath,
         false)
 
@@ -457,7 +465,8 @@ case class RefreshIndexCommand(
         "indexName" -> i.name,
         "indexTime" -> i.time,
         "isAppend" -> "true",
-        "indexType" -> indexType.toString
+        "indexType" -> indexType.toString,
+        "indexDDLJobId" -> jobId
       )
 
       FileFormatWriter.write(
@@ -471,7 +480,9 @@ case class RefreshIndexCommand(
         Seq.empty, // partitionColumns
         bucketSpec = None,
         statsTrackers = Nil,
-        options = options)._1.asInstanceOf[Seq[Seq[IndexBuildResult]]]
+        options = options)
+
+      OapIndexFileFormat.fetchAndRemoveWriteResults(jobId).asInstanceOf[Seq[Seq[IndexBuildResult]]]
     })
     if (buildrst.nonEmpty) {
       val retMap: Map[String, Seq[IndexBuildResult]] = buildrst.head.flatten.groupBy(_.parent)
