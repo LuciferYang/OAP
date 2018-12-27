@@ -157,7 +157,8 @@ class OapIndexQuerySuite extends QueryTest with SharedOapContext with BeforeAndA
     }
   }
 
-  test("OAP-978 Misjudged by MinMaxStatisticsReader about like query") {
+  test("OAP-978 Misjudged by " +
+    "MinMaxStatisticsReader & PartByValueStatisticsReader startswith using index.") {
     val data: Seq[(Int, String)] =
       scala.util.Random.shuffle(30 to 90).map(i => (i, s"this$i is test"))
     data.toDF("key", "value").createOrReplaceTempView("t")
