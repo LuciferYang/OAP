@@ -250,8 +250,6 @@ private[sql] class OapFileFormat extends FileFormat
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case IsNotNull(attribute) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-        case StringStartsWith(attribute, _) =>
-          if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case _ => false
       }
 
