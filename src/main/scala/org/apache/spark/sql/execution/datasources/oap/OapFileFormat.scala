@@ -149,6 +149,7 @@ private[sql] class OapFileFormat extends FileFormat
       filters: Seq[Filter],
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
+
     // TODO we need to pass the extra data source meta information via the func parameter
     meta match {
       case Some(m) =>
@@ -156,7 +157,7 @@ private[sql] class OapFileFormat extends FileFormat
           + m.dataReaderClassName.substring(m.dataReaderClassName.lastIndexOf(".") + 1)
           + " ...")
 
-        val filterScanners = indexScanners(m, filters)
+        val filterScanners = indexScanners(sparkSession, m, filters)
         hitIndexColumns = filterScanners match {
           case Some(s) =>
             s.scanners.flatMap { scanner =>
@@ -224,7 +225,17 @@ private[sql] class OapFileFormat extends FileFormat
     }
   }
 
-  protected def indexScanners(m: DataSourceMeta, filters: Seq[Filter]): Option[IndexScanners] = {
+  protected def indexScanners(sparkSession: SparkSession, m: DataSourceMeta,
+      filters: Seq[Filter]): Option[IndexScanners] = {
+
+    def pushDownStartsWith: Boolean = {
+      val conf = sparkSession.conf
+      val statisticsEnable =
+        conf.get(OapConf.OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY)
+      val startsWithPushDown = conf.get(OapConf.OAP_PUSH_DOWN_STARTS_WITH_ENABLE)
+      assert(statisticsEnable && !startsWithPushDown)
+      startsWithPushDown
+    }
 
     // Check whether this filter conforms to certain patterns that could benefit from index
     def canTriggerIndex(filter: Filter): Boolean = {
@@ -249,6 +260,8 @@ private[sql] class OapFileFormat extends FileFormat
         case IsNull(attribute) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case IsNotNull(attribute) =>
+          if (attr ==  null || attr == attribute) {attr = attribute; true} else false
+        case StringStartsWith(attribute, _) if pushDownStartsWith =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case _ => false
       }
