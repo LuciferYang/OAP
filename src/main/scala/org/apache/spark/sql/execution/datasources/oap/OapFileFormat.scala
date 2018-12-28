@@ -233,8 +233,9 @@ private[sql] class OapFileFormat extends FileFormat
       val statisticsEnable =
         conf.get(OapConf.OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY)
       val startsWithPushDown = conf.get(OapConf.OAP_PUSH_DOWN_STARTS_WITH_ENABLE)
-      assert(statisticsEnable && !startsWithPushDown, "if spark.sql.oap.oindex.statistics.policy " +
-        "configure to true, spark.sql.oap.startswith.pushdown.enable must be false.")
+      assert(!(statisticsEnable && startsWithPushDown),
+        "if spark.sql.oap.oindex.statistics.policy configure to true, " +
+          "spark.sql.oap.startswith.pushdown.enable must be false.")
       startsWithPushDown
     }
 
