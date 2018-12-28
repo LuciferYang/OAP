@@ -157,7 +157,7 @@ private[sql] class OapFileFormat extends FileFormat
           + m.dataReaderClassName.substring(m.dataReaderClassName.lastIndexOf(".") + 1)
           + " ...")
 
-        val filterScanners = indexScanners(sparkSession, m, filters)
+        val filterScanners = indexScanners(m, filters, isPushDownStartsWith(sparkSession))
         hitIndexColumns = filterScanners match {
           case Some(s) =>
             s.scanners.flatMap { scanner =>
@@ -225,19 +225,8 @@ private[sql] class OapFileFormat extends FileFormat
     }
   }
 
-  protected def indexScanners(sparkSession: SparkSession, m: DataSourceMeta,
-      filters: Seq[Filter]): Option[IndexScanners] = {
-
-    def pushDownStartsWith: Boolean = {
-      val conf = sparkSession.conf
-      val statisticsEnable =
-        conf.get(OapConf.OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY)
-      val startsWithPushDown = conf.get(OapConf.OAP_PUSH_DOWN_STARTS_WITH_ENABLE)
-      assert(!(statisticsEnable && startsWithPushDown),
-        "if spark.sql.oap.oindex.statistics.policy configure to true, " +
-          "spark.sql.oap.startswith.pushdown.enable must be false.")
-      startsWithPushDown
-    }
+  protected def indexScanners(m: DataSourceMeta,
+      filters: Seq[Filter], pushDownStartsWith: Boolean = false): Option[IndexScanners] = {
 
     // Check whether this filter conforms to certain patterns that could benefit from index
     def canTriggerIndex(filter: Filter): Boolean = {
@@ -291,6 +280,17 @@ private[sql] class OapFileFormat extends FileFormat
       }
     }
     ic.getScanners
+  }
+
+  protected def isPushDownStartsWith(sparkSession: SparkSession): Boolean = {
+    val conf = sparkSession.conf
+    val statisticsEnable =
+      conf.get(OapConf.OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY)
+    val startsWithPushDown = conf.get(OapConf.OAP_PUSH_DOWN_STARTS_WITH_ENABLE)
+    assert(!(statisticsEnable && startsWithPushDown),
+      "if spark.sql.oap.oindex.statistics.policy configure to true, " +
+        "spark.sql.oap.startswith.pushdown.enable must be false.")
+    startsWithPushDown
   }
 }
 

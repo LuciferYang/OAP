@@ -70,7 +70,7 @@ private[sql] class OptimizedOrcFileFormat extends OapFileFormat {
           + m.dataReaderClassName.substring(m.dataReaderClassName.lastIndexOf(".") + 1)
           + " ...")
 
-        val filterScanners = indexScanners(sparkSession, m, filters)
+        val filterScanners = indexScanners(m, filters, isPushDownStartsWith(sparkSession))
         // TODO refactor this.
         hitIndexColumns = filterScanners match {
           case Some(s) =>
