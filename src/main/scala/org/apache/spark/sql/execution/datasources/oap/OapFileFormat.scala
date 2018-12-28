@@ -225,8 +225,10 @@ private[sql] class OapFileFormat extends FileFormat
     }
   }
 
-  protected def indexScanners(m: DataSourceMeta,
-      filters: Seq[Filter], pushDownStartsWith: Boolean = false): Option[IndexScanners] = {
+  protected def indexScanners(
+      m: DataSourceMeta,
+      filters: Seq[Filter],
+      pushDownStartsWith: Boolean = false): Option[IndexScanners] = {
 
     // Check whether this filter conforms to certain patterns that could benefit from index
     def canTriggerIndex(filter: Filter): Boolean = {
