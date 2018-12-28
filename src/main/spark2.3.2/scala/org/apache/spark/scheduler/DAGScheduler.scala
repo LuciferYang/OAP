@@ -31,8 +31,8 @@ import scala.language.postfixOps
 import scala.util.control.NonFatal
 
 import org.apache.commons.lang3.SerializationUtils
-import org.apache.spark._
 
+import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
@@ -41,7 +41,6 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.partial.{ApproximateActionListener, ApproximateEvaluator, PartialResult}
 import org.apache.spark.rdd.{DeterministicLevel, RDD, RDDCheckpointData}
 import org.apache.spark.rpc.RpcTimeout
-import org.apache.spark.sql.execution.datasources.oap.filecache.OapCacheLocations
 import org.apache.spark.storage._
 import org.apache.spark.storage.BlockManagerMessages.BlockManagerHeartbeat
 import org.apache.spark.util._
