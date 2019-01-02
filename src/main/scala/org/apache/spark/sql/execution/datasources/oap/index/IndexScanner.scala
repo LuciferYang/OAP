@@ -136,8 +136,10 @@ private[oap] abstract class IndexScanner(idxMeta: IndexMeta)
       if (statsPolicyEnable) {
         if (intervalArray.isEmpty) {
           StatsAnalysisResult.SKIP_INDEX
-        } else {
+        } else if (!intervalArray.exists(_.isPrefixMatch)) {
           analyzeStatistics(indexPath, conf)
+        } else {
+          StatsAnalysisResult.USE_INDEX
         }
       } else {
         StatsAnalysisResult.USE_INDEX
