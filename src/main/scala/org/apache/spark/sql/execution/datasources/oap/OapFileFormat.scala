@@ -149,7 +149,6 @@ private[sql] class OapFileFormat extends FileFormat
       filters: Seq[Filter],
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
-
     // TODO we need to pass the extra data source meta information via the func parameter
     meta match {
       case Some(m) =>
@@ -157,7 +156,7 @@ private[sql] class OapFileFormat extends FileFormat
           + m.dataReaderClassName.substring(m.dataReaderClassName.lastIndexOf(".") + 1)
           + " ...")
 
-        val filterScanners = indexScanners(m, filters, isPushDownStartsWith(sparkSession))
+        val filterScanners = indexScanners(m, filters)
         hitIndexColumns = filterScanners match {
           case Some(s) =>
             s.scanners.flatMap { scanner =>
@@ -225,10 +224,7 @@ private[sql] class OapFileFormat extends FileFormat
     }
   }
 
-  protected def indexScanners(
-      m: DataSourceMeta,
-      filters: Seq[Filter],
-      pushDownStartsWith: Boolean = false): Option[IndexScanners] = {
+  protected def indexScanners(m: DataSourceMeta, filters: Seq[Filter]): Option[IndexScanners] = {
 
     // Check whether this filter conforms to certain patterns that could benefit from index
     def canTriggerIndex(filter: Filter): Boolean = {
@@ -254,7 +250,7 @@ private[sql] class OapFileFormat extends FileFormat
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case IsNotNull(attribute) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-        case StringStartsWith(attribute, _) if pushDownStartsWith =>
+        case StringStartsWith(attribute, _) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case _ => false
       }
@@ -282,17 +278,6 @@ private[sql] class OapFileFormat extends FileFormat
       }
     }
     ic.getScanners
-  }
-
-  protected def isPushDownStartsWith(sparkSession: SparkSession): Boolean = {
-    val conf = sparkSession.conf
-    val statisticsEnable =
-      conf.get(OapConf.OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY)
-    val startsWithPushDown = conf.get(OapConf.OAP_PUSH_DOWN_STARTS_WITH_ENABLE)
-    assert(!(statisticsEnable && startsWithPushDown),
-      "if spark.sql.oap.oindex.statistics.policy configure to true, " +
-        "spark.sql.oap.startswith.pushdown.enable must be false.")
-    startsWithPushDown
   }
 }
 

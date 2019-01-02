@@ -111,6 +111,7 @@ private[oap] abstract class IndexScanner(idxMeta: IndexMeta)
   // Decide by size ratio(generalized statistics : )) & statistics in index file
   private def analysisResByStatistics(indexPath: Path, dataPath: Path, conf: Configuration)
     : StatsAnalysisResult = {
+
     val fs = dataPath.getFileSystem(conf)
     require(fs.isFile(indexPath), s"Index file path $indexPath is a directory, it should be a file")
 
@@ -136,8 +137,10 @@ private[oap] abstract class IndexScanner(idxMeta: IndexMeta)
       if (statsPolicyEnable) {
         if (intervalArray.isEmpty) {
           StatsAnalysisResult.SKIP_INDEX
-        } else {
+        } else if (!intervalArray.exists(_.isPrefixMatch)) {
           analyzeStatistics(indexPath, conf)
+        } else {
+          StatsAnalysisResult.USE_INDEX
         }
       } else {
         StatsAnalysisResult.USE_INDEX

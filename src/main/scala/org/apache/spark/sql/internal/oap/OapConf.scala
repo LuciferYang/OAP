@@ -302,15 +302,6 @@ object OapConf {
       .stringConf
       .createWithDefault("")
 
-  val OAP_PUSH_DOWN_STARTS_WITH_ENABLE =
-    SqlConfAdapter.buildConf("spark.sql.oap.startswith.pushdown.enable")
-    .internal()
-    .doc("Now Some badcase triggered when push down startswith filter and " +
-      "OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY enable, needs to be guaranteed that this " +
-      "config use opposite value with OAP_EXECUTOR_INDEX_SELECTION_STATISTICS_POLICY")
-    .booleanConf
-    .createWithDefault(false)
-
   val ORC_VECTORIZED_READER_ENABLED =
     SqlConfAdapter.ORC_VECTORIZED_READER_ENABLED
 
