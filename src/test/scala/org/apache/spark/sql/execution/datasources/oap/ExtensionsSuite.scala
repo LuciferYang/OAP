@@ -45,8 +45,12 @@ class ExtensionsSuite extends SparkFunSuite {
     }
   }
 
+
+  private def withOapExtensionsSession(f: SparkSession => Unit): Unit =
+    withSession(new OapExtensions)(f)
+
   test("extensions") {
-    withSession(new OapExtensions) { session =>
+    withOapExtensionsSession { session =>
       val path = Utils.createTempDir().getAbsolutePath
       session.sql(s"""CREATE TEMPORARY VIEW parquet_test (a INT, b STRING)
                      | USING parquet
