@@ -63,6 +63,9 @@ class ExtensionsSuite extends SparkFunSuite {
 
       session.sql("insert overwrite table parquet_test select * from t")
       session.sql("create oindex index1 on parquet_test (a)")
+      val rows = session.sql("select a from parquet_test where a = 1").collect()
+      assert(rows.length == 1)
+      assert(rows.head.getInt(0) == 1)
     }
   }
 }
