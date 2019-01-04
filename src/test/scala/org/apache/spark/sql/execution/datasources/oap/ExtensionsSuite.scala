@@ -66,6 +66,7 @@ class ExtensionsSuite extends SparkFunSuite {
       val rows = session.sql("select a from parquet_test where a = 1").collect()
       assert(rows.length == 1)
       assert(rows.head.getInt(0) == 1)
+      session.sql("drop oindex index1 on parquet_test")
     }
   }
 }
