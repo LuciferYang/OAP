@@ -27,7 +27,7 @@ import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, SparkPlan
 import org.apache.spark.sql.execution.datasources.oap.{IndexType, OapFileFormat}
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.{OapDriverRuntime, OapRuntime}
-import org.apache.spark.sql.test.SharedOapSQLContext
+import org.apache.spark.sql.test.OapSharedSQLContext
 
 trait SharedOapContext extends SharedOapContextBase {
   protected override def createSparkSession: SparkSession = {
@@ -56,7 +56,13 @@ trait SharedOapLocalClusterContext extends SharedOapContextBase {
   }
 }
 
-trait SharedOapContextBase extends SharedOapSQLContext {
+trait SharedOapContextBase extends OapSharedSQLContext {
+
+  // In Spark 2.1, sparkConf is a val. However is Spark 2.2 sparkConf is a function that create
+  // a new SparkConf each time.
+  val oapSparkConf = sparkConf
+  // avoid the overflow of offHeap memory
+  oapSparkConf.set("spark.memory.offHeap.size", "100m")
 
   protected override def beforeAll(): Unit = {
     super.beforeAll()

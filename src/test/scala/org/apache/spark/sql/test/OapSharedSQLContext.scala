@@ -27,12 +27,12 @@ import org.apache.spark.sql.{SparkSession, SQLContext}
 import org.apache.spark.sql.internal.SQLConf
 
 
-trait SharedOapSQLContext extends SQLTestUtils with SharedOapSession
+trait OapSharedSQLContext extends SQLTestUtils with OapSharedSparkSession
 
 /**
  * Helper trait for SQL test suites where all tests share a single [[SparkSession]].
  */
-trait SharedOapSession
+trait OapSharedSparkSession
   extends SQLTestUtilsBase
     with BeforeAndAfterEach
     with Eventually { self: Suite =>
@@ -46,8 +46,6 @@ trait SharedOapSession
       .set(SQLConf.SHUFFLE_PARTITIONS.key, "5")
       .set("spark.memory.offHeap.size", "100m")
   }
-
-  protected val oapSparkConf: SparkConf = sparkConf
 
   /**
    * The [[SparkSession]] to use for all tests in this suite.
@@ -88,7 +86,7 @@ trait SharedOapSession
   }
 
   /**
-   * Make sure the [[TestSparkSession]] is initialized before any tests are run.
+   * Make sure the [[SparkSession]] is initialized before any tests are run.
    */
   protected override def beforeAll(): Unit = {
     initializeSession()
