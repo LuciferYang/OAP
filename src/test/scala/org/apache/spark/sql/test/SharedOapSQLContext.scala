@@ -63,14 +63,14 @@ trait SharedOapSession
   protected implicit def spark: SparkSession = _spark
 
   /**
-   * The [[TestSQLContext]] to use for all tests in this suite.
+   * The [[SQLContext]] to use for all tests in this suite.
    */
   protected implicit def sqlContext: SQLContext = _spark.sqlContext
 
-  protected def createSparkSession: SparkSession = {
-    SparkSession.cleanupAnyExistingSession()
-    SparkSession.builder().config(oapSparkConf).getOrCreate()
-  }
+  /**
+   * SubClass should override this method to construct [[SparkSession]]
+   */
+  protected def createSparkSession: SparkSession
 
   /**
    * Initialize the [[SparkSession]].  Generally, this is just called from
