@@ -44,7 +44,7 @@ object OapFileSourceStrategy extends Strategy with Logging {
         case ProjectExec(projectList, FilterExec(condition,
           FileSourceScanExec(relation, output, outputSchema, partitionFilters,
           dataFilters, tableIdentifier))) =>
-          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize2(
+          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
             val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
@@ -58,7 +58,7 @@ object OapFileSourceStrategy extends Strategy with Logging {
           FileSourceScanExec(relation, output, outputSchema, partitionFilters,
           dataFilters, tableIdentifier)) =>
 
-          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize2(
+          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
             val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
@@ -70,7 +70,7 @@ object OapFileSourceStrategy extends Strategy with Logging {
         // FilterExec -> FileSourceScanExec
         case FilterExec(condition, FileSourceScanExec(relation, output, outputSchema,
           partitionFilters, dataFilters, tableIdentifier)) =>
-          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize2(
+          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
             val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
@@ -82,7 +82,7 @@ object OapFileSourceStrategy extends Strategy with Logging {
         // FileSourceScanExec
         case FileSourceScanExec(relation, output, outputSchema, partitionFilters,
         dataFilters, tableIdentifier) =>
-          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize2(
+          val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
             FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
