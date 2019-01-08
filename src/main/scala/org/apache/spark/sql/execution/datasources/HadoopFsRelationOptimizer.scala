@@ -122,4 +122,100 @@ object HadoopFsRelationOptimizer extends Logging {
         relation
     }
   }
+
+
+  def tryOptimize2(relation: HadoopFsRelation, partitionKeyFilters: Seq[Expression],
+      dataFilters: Seq[Expression], outputSchema: StructType): (HadoopFsRelation, Boolean) = {
+
+    def selectedPartitions: Seq[PartitionDirectory] =
+      relation.location.listFiles(partitionKeyFilters, Nil)
+
+    relation.fileFormat match {
+      case _: ReadOnlyParquetFileFormat =>
+        logInfo("index operation for parquet, retain ReadOnlyParquetFileFormat.")
+        (relation, false)
+      case _: ReadOnlyOrcFileFormat | _: ReadOnlyNativeOrcFileFormat =>
+        logInfo("index operation for orc, retain ReadOnlyOrcFileFormat.")
+        (relation, false)
+      // There are two scenarios will use OptimizedParquetFileFormat:
+      // 1. canUseCache: OAP_PARQUET_ENABLED is true and OAP_PARQUET_DATA_CACHE_ENABLED is true
+      //    and PARQUET_VECTORIZED_READER_ENABLED is true and WHOLESTAGE_CODEGEN_ENABLED is
+      //    true and all fields in outputSchema are AtomicType.
+      // 2. canUseIndex: OAP_PARQUET_ENABLED is true and hasAvailableIndex.
+      // Other scenarios still use ParquetFileFormat.
+      case _: ParquetFileFormat
+        if relation.sparkSession.conf.get(OapConf.OAP_PARQUET_ENABLED) =>
+
+        val optimizedParquetFileFormat = new OptimizedParquetFileFormat
+        optimizedParquetFileFormat
+          .init(relation.sparkSession,
+            relation.options,
+            selectedPartitions.flatMap(p => p.files))
+
+        def canUseCache: Boolean = {
+          val runtimeConf = relation.sparkSession.conf
+          val cacheEnabled = runtimeConf.get(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED)
+          logDebug(s"config - ${OapConf.OAP_PARQUET_DATA_CACHE_ENABLED.key} is $cacheEnabled")
+          val ret = cacheEnabled && runtimeConf.get(SQLConf.PARQUET_VECTORIZED_READER_ENABLED) &&
+            runtimeConf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED) &&
+            outputSchema.forall(_.dataType.isInstanceOf[AtomicType])
+          if (ret) {
+            logInfo("data cache enable and suitable for use , " +
+              "will replace with OptimizedParquetFileFormat.")
+          }
+          ret
+        }
+
+        def canUseIndex: Boolean = {
+          val indexEnabled = relation.sparkSession.conf.get(OapConf.OAP_PARQUET_INDEX_ENABLED)
+          logDebug(s"config - ${OapConf.OAP_PARQUET_INDEX_ENABLED.key} is $indexEnabled")
+          val ret = indexEnabled && optimizedParquetFileFormat.hasAvailableIndex(dataFilters)
+          if (ret) {
+            logInfo("index enable and hasAvailableIndex is true, " +
+              "will replace with OptimizedParquetFileFormat.")
+          }
+          ret
+        }
+
+        if (canUseCache || canUseIndex) {
+          (relation.copy(fileFormat = optimizedParquetFileFormat)(relation.sparkSession), true)
+        } else {
+          logInfo("neither index nor data cache is available, retain ParquetFileFormat.")
+          (relation, false)
+        }
+
+      case a if relation.sparkSession.conf.get(OapConf.OAP_ORC_ENABLED) &&
+        (a.isInstanceOf[org.apache.spark.sql.hive.orc.OrcFileFormat] ||
+          a.isInstanceOf[org.apache.spark.sql.execution.datasources.orc.OrcFileFormat]) =>
+        val optimizedOrcFileFormat = new OptimizedOrcFileFormat
+        optimizedOrcFileFormat
+          .init(relation.sparkSession,
+            relation.options,
+            selectedPartitions.flatMap(p => p.files))
+
+        if (optimizedOrcFileFormat.hasAvailableIndex(dataFilters)) {
+          logInfo("hasAvailableIndex = true, will replace with OapFileFormat.")
+          val orcOptions: Map[String, String] =
+            Map(SQLConf.ORC_FILTER_PUSHDOWN_ENABLED.key ->
+              relation.sparkSession.sessionState.conf.orcFilterPushDown.toString) ++
+              relation.options
+
+          (relation.copy(fileFormat = optimizedOrcFileFormat,
+            options = orcOptions)(relation.sparkSession), true)
+        } else {
+          logInfo("hasAvailableIndex = false, will retain OrcFileFormat.")
+          (relation, false)
+        }
+
+      case _: OapFileFormat =>
+        relation.fileFormat.asInstanceOf[OapFileFormat].init(
+          relation.sparkSession,
+          relation.options,
+          selectedPartitions.flatMap(p => p.files))
+        (relation, false)
+
+      case _: FileFormat =>
+        (relation, false)
+    }
+  }
 }
