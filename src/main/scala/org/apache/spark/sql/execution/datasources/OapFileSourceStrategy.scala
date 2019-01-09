@@ -22,7 +22,6 @@ import org.apache.spark.sql.{execution, Strategy}
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, ProjectExec, SparkPlan}
-import org.apache.spark.sql.oap.adapter.FileSourceScanExecAdapter
 
 /**
  * OapFileSourceStrategy use to intercept [[FileSourceStrategy]]
@@ -47,8 +46,8 @@ object OapFileSourceStrategy extends Strategy with Logging {
           val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
-            val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
-              output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+            val scan = FileSourceScanExec(hadoopFsRelation, output, outputSchema,
+              partitionFilters, dataFilters, tableIdentifier)
             execution.ProjectExec(projectList, execution.FilterExec(condition, scan))
           } else {
             head
@@ -61,8 +60,8 @@ object OapFileSourceStrategy extends Strategy with Logging {
           val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
-            val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
-              output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+            val scan = FileSourceScanExec(hadoopFsRelation, output, outputSchema,
+              partitionFilters, dataFilters, tableIdentifier)
             execution.ProjectExec(projectList, scan)
           } else {
             head
@@ -73,8 +72,8 @@ object OapFileSourceStrategy extends Strategy with Logging {
           val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
-            val scan = FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
-              output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+            val scan = FileSourceScanExec(hadoopFsRelation, output, outputSchema,
+              partitionFilters, dataFilters, tableIdentifier)
             execution.FilterExec(condition, scan)
           } else {
             head
@@ -85,8 +84,8 @@ object OapFileSourceStrategy extends Strategy with Logging {
           val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
-            FileSourceScanExecAdapter.createFileSourceScanExec(hadoopFsRelation,
-              output, outputSchema, partitionFilters, dataFilters, tableIdentifier)
+            FileSourceScanExec(hadoopFsRelation, output, outputSchema,
+              partitionFilters, dataFilters, tableIdentifier)
           } else {
             head
           }
