@@ -25,6 +25,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.{OutputWriterFactory, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.oap.io.{DataFileContext, OapDataReaderV1, ParquetVectorizedContext}
 import org.apache.spark.sql.execution.datasources.oap.utils.FilterHelper
+import org.apache.spark.sql.execution.datasources.parquet.{ParquetReadSupportWrapper, ParquetSchemaConverter}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.sources.Filter
@@ -95,6 +96,11 @@ private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
     hadoopConf.set(
       SQLConf.SESSION_LOCAL_TIMEZONE.key,
       sparkSession.sessionState.conf.sessionLocalTimeZone)
+
+    // Set SPARK_ROW_REQUESTED_SCHEMA at driver side, and broadcast it.
+    hadoopConf.set(
+      ParquetReadSupportWrapper.SPARK_ROW_REQUESTED_SCHEMA,
+      requiredSchema.json)
 
     // Sets flags for `ParquetToSparkSchemaConverter`
     hadoopConf.setBoolean(
