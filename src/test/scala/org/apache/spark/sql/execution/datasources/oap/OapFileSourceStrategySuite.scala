@@ -151,6 +151,7 @@ class OapFileSourceStrategyForOapSuite extends OapFileSourceStrategySuite {
   protected def verifyFileFormat(format: FileFormat): Boolean =
     format.isInstanceOf[OapFileFormat]
 
+  // Oap Data File always use original plan.
   override protected def verifyOptimizedSameResult(plan1: SparkPlan, plan2: SparkPlan): Boolean =
     plan1.sameResult(plan2)
 }
