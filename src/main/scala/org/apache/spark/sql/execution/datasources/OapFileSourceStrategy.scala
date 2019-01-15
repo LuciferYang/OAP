@@ -80,7 +80,7 @@ object OapFileSourceStrategy extends Strategy with Logging {
           }
         // FileSourceScanExec
         case FileSourceScanExec(relation, output, outputSchema, partitionFilters,
-        dataFilters, tableIdentifier) =>
+          dataFilters, tableIdentifier) =>
           val (hadoopFsRelation, isOptimized) = HadoopFsRelationOptimizer.tryOptimize(
             relation, partitionFilters, dataFilters, outputSchema)
           if (isOptimized) {
