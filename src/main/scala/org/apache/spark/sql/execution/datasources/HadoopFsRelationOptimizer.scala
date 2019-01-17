@@ -34,8 +34,11 @@ object HadoopFsRelationOptimizer extends Logging {
    * if use Oap, return (OptimizedRelation, true)
    * else (OriginalRelation, false).
    */
-  def tryOptimize(relation: HadoopFsRelation, partitionKeyFilters: Seq[Expression],
-      dataFilters: Seq[Expression], outputSchema: StructType): (HadoopFsRelation, Boolean) = {
+  def tryOptimize(
+      relation: HadoopFsRelation,
+      partitionKeyFilters: Seq[Expression],
+      dataFilters: Seq[Expression],
+      outputSchema: StructType): (HadoopFsRelation, Boolean) = {
 
     def selectedPartitions: Seq[PartitionDirectory] =
       relation.location.listFiles(partitionKeyFilters, Nil)
