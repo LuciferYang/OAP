@@ -177,7 +177,7 @@ trait OapStrategy extends Strategy with Logging {
  *   1. add more use scenarios in future.
  *   2. abstract common implementation between oap strategies.
  */
-object OapSortLimitStrategy extends OapStrategy with Logging {
+object OapSortLimitStrategy extends OapStrategy {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case logical.ReturnAnswer(rootPlan) => rootPlan match {
       case logical.Limit(IntegerLiteral(limit), logical.Sort(order, true, child)) =>
@@ -252,7 +252,7 @@ object OapSortLimitStrategy extends OapStrategy with Logging {
  * TODO: choose any index if no filter.
  *
  */
-object OapSemiJoinStrategy extends OapStrategy with Logging {
+object OapSemiJoinStrategy extends OapStrategy {
   private def canBroadcast(plan: LogicalPlan): Boolean = {
     val conf = SparkSession.getActiveSession.get.sessionState.conf
     // We can take a much larger threshold here since if this optimization
