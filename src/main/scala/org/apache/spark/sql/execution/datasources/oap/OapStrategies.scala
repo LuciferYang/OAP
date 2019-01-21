@@ -40,7 +40,7 @@ import org.apache.spark.sql.internal.oap.OapConf
 import org.apache.spark.sql.oap.adapter.{AggregateFunctionAdapter, FileIndexAdapter, FileSourceScanExecAdapter, LogicalPlanAdapter}
 import org.apache.spark.util.Utils
 
-trait OapStrategy extends Logging {
+trait OapStrategy extends Strategy with Logging {
 
   /**
    * Pretty much like FileSourceStrategy.apply() as the only difference is the sort
@@ -177,7 +177,7 @@ trait OapStrategy extends Logging {
  *   1. add more use scenarios in future.
  *   2. abstract common implementation between oap strategies.
  */
-object OapSortLimitStrategy extends Strategy with OapStrategy with Logging {
+object OapSortLimitStrategy extends OapStrategy with Logging {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case logical.ReturnAnswer(rootPlan) => rootPlan match {
       case logical.Limit(IntegerLiteral(limit), logical.Sort(order, true, child)) =>
@@ -252,7 +252,7 @@ object OapSortLimitStrategy extends Strategy with OapStrategy with Logging {
  * TODO: choose any index if no filter.
  *
  */
-object OapSemiJoinStrategy extends Strategy with OapStrategy with Logging {
+object OapSemiJoinStrategy extends OapStrategy with Logging {
   private def canBroadcast(plan: LogicalPlan): Boolean = {
     val conf = SparkSession.getActiveSession.get.sessionState.conf
     // We can take a much larger threshold here since if this optimization
@@ -314,7 +314,7 @@ object OapSemiJoinStrategy extends Strategy with OapStrategy with Logging {
  *   [WHERE filter on columns]
  *   GROUP BY one specific column
  */
-object OapGroupAggregateStrategy extends Strategy with OapStrategy {
+object OapGroupAggregateStrategy extends OapStrategy {
   def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
     case PhysicalAggregation(
     groupingExpressions, aggregateExpressions, resultExpressions, child) =>
