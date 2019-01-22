@@ -24,12 +24,13 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.oap.index.IndexBuildResult
+import org.apache.spark.sql.oap.adapter.InputFileNameHolderAdapter
 
 case class IndexWriteTaskStats(writeStatus: Seq[IndexBuildResult]) extends WriteTaskStats
 
 class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
 
-  private[this] var curFile: Option[String] = None
+  private[this] var curFile: String = _
 
   private[this] var statusMap: Map[String, LongAdder] = Map.empty[String, LongAdder]
 
@@ -42,21 +43,24 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
   }
 
   override def newFile(filePath: String): Unit = {
-    curFile = Some(filePath)
-    statusMap = statusMap + (filePath -> new LongAdder)
+    // currently unhandled
   }
 
   override def newRow(row: InternalRow): Unit = {
-    curFile.foreach(statusMap.get(_).foreach(_.increment))
+    val current = InputFileNameHolderAdapter.getInputFileName().toString
+    if (curFile != current) {
+      curFile = current
+      statusMap = statusMap + (current -> new LongAdder)
+    }
+    statusMap.get(curFile).foreach(_.increment)
   }
 
   override def getFinalStats(): WriteTaskStats = {
-    curFile = None
     val results = statusMap.map {
       case (filePath, rowCount) =>
         val path = new Path(filePath)
         IndexBuildResult(path.getName, rowCount.longValue(), "", path.getParent.toString)
-    }
+    }.filter(_.rowCount != 0)
     IndexWriteTaskStats(results.toSeq)
   }
 }
