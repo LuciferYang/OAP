@@ -47,10 +47,10 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
   }
 
   override def newRow(row: InternalRow): Unit = {
-    val current = InputFileNameHolderAdapter.getInputFileName().toString
-    if (curFile != current) {
-      curFile = current
-      statusMap = statusMap + (current -> new LongAdder)
+    val inputFileName = InputFileNameHolderAdapter.getInputFileName().toString
+    if (curFile != inputFileName) {
+      curFile = inputFileName
+      statusMap = statusMap + (inputFileName -> new LongAdder)
     }
     statusMap.get(curFile).foreach(_.increment)
   }
