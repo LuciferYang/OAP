@@ -60,7 +60,7 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
       case (filePath, rowCount) =>
         val path = new Path(filePath)
         IndexBuildResult(path.getName, rowCount.longValue(), "", path.getParent.toString)
-    }.filter(_.rowCount != 0)
+    }
     IndexWriteTaskStats(results.toSeq)
   }
 }
