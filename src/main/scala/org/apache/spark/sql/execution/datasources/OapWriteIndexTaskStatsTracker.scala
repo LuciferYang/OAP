@@ -52,7 +52,7 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
       curFile = inputFileName
       statusMap = statusMap + (inputFileName -> new LongAdder)
     }
-    statusMap.get(curFile).foreach(_.increment)
+    statusMap(curFile).increment()
   }
 
   override def getFinalStats(): WriteTaskStats = {
