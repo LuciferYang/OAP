@@ -30,7 +30,7 @@ case class IndexWriteTaskStats(writeStatus: Seq[IndexBuildResult]) extends Write
 
 class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
 
-  private[this] var curFile: String = _
+  private[this] var curInputFileName: String = _
 
   private[this] var statusMap: Map[String, LongAdder] = Map.empty[String, LongAdder]
 
@@ -48,11 +48,11 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
 
   override def newRow(row: InternalRow): Unit = {
     val inputFileName = InputFileNameHolderAdapter.getInputFileName().toString
-    if (curFile != inputFileName) {
-      curFile = inputFileName
+    if (curInputFileName != inputFileName) {
+      curInputFileName = inputFileName
       statusMap = statusMap + (inputFileName -> new LongAdder)
     }
-    statusMap(curFile).increment()
+    statusMap(curInputFileName).increment()
   }
 
   override def getFinalStats(): WriteTaskStats = {
