@@ -18,7 +18,7 @@
 package org.apache.spark.sql
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.execution.SparkSqlParser
+import org.apache.spark.sql.execution.OapSparkSqlParser
 import org.apache.spark.sql.execution.datasources.OapFileSourceStrategy
 import org.apache.spark.sql.execution.datasources.oap._
 
@@ -45,7 +45,7 @@ class OapExtensionsSuite extends SparkFunSuite {
 
       // TODO There will be Custom SparkSqlParser after we do expansion.
       val sqlParser = withOapExtensionsSession.sessionState.sqlParser
-      assert(sqlParser.isInstanceOf[SparkSqlParser])
+      assert(sqlParser.isInstanceOf[OapSparkSqlParser])
     } finally {
       stop(withOapExtensionsSession)
     }
