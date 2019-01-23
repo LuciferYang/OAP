@@ -28,7 +28,7 @@ class OapExtensions extends (SparkSessionExtensions => Unit) {
     extensions.injectPlannerStrategy(_ => OapSemiJoinStrategy)
     extensions.injectPlannerStrategy(_ => OapGroupAggregateStrategy)
     extensions.injectPlannerStrategy(_ => OapFileSourceStrategy)
-
+    // Oap Custom SqlParser.
     extensions.injectParser((_, _) => new OapSparkSqlParser)
   }
 }
