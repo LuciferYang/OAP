@@ -202,7 +202,7 @@ case class CreateIndexCommand(
       "indexType" -> indexType.toString
     )
 
-    val statsTrackers = new OapWriteIndexJobStatsTracker
+    val statsTrackers = new OapIndexWriteJobStatsTracker
 
     FileFormatWriter.write(
       sparkSession = sparkSession,
@@ -462,7 +462,7 @@ case class RefreshIndexCommand(
         "indexType" -> indexType.toString
       )
 
-      val statsTrackers = new OapWriteIndexJobStatsTracker
+      val statsTrackers = new OapIndexWriteJobStatsTracker
 
       FileFormatWriter.write(
         sparkSession = sparkSession,

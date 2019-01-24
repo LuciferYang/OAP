@@ -28,7 +28,7 @@ import org.apache.spark.sql.oap.adapter.InputFileNameHolderAdapter
 
 case class IndexWriteTaskStats(writeStatus: Seq[IndexBuildResult]) extends WriteTaskStats
 
-class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
+class OapIndexWriteTaskStatsTracker extends WriteTaskStatsTracker with Logging {
 
   private[this] var curInputFileName: String = _
 
@@ -65,11 +65,11 @@ class OapWriteIndexTaskStatsTracker extends WriteTaskStatsTracker with Logging {
   }
 }
 
-class OapWriteIndexJobStatsTracker extends WriteJobStatsTracker with Logging {
+class OapIndexWriteJobStatsTracker extends WriteJobStatsTracker with Logging {
 
   private[this] var indexBuildResultSeq: Seq[IndexBuildResult] = _
 
-  override def newTaskInstance(): WriteTaskStatsTracker = new OapWriteIndexTaskStatsTracker
+  override def newTaskInstance(): WriteTaskStatsTracker = new OapIndexWriteTaskStatsTracker
 
   override def processStats(stats: Seq[WriteTaskStats]): Unit = {
     indexBuildResultSeq = stats.flatMap(_.asInstanceOf[IndexWriteTaskStats].writeStatus)
