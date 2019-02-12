@@ -88,7 +88,6 @@ private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
     // TODO why add `sparkSession.sessionState.conf.wholeStageEnabled` condition
     val enableVectorizedReader: Boolean =
       sparkSession.sessionState.conf.parquetVectorizedReaderEnabled &&
-        sparkSession.sessionState.conf.wholeStageEnabled &&
         resultSchema.forall(_.dataType.isInstanceOf[AtomicType])
     val returningBatch = supportBatch(sparkSession, resultSchema)
 
