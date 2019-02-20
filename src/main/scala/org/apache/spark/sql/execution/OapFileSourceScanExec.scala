@@ -185,13 +185,10 @@ case class OapFileSourceScanExec(
 
   private lazy val inputRDD: RDD[InternalRow] = {
 
-    // for OAP
-    // init accumulator before buildReader
-    relation.fileFormat match {
-      case format: OapFileFormat =>
-        format.initMetrics(metrics)
-      case _ => Unit
-    }
+    // init accumulator before buildReader,
+    // now use OapFileSourceScanExec must be OapFileFormat or subclass
+    assert(relation.fileFormat.isInstanceOf[OapFileFormat])
+    relation.fileFormat.asInstanceOf[OapFileFormat].initMetrics(metrics)
 
     val readFile: PartitionedFile => Iterator[InternalRow] =
       relation.fileFormat.buildReaderWithPartitionValues(
