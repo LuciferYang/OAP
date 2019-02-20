@@ -249,7 +249,7 @@ case class OapFileSourceScanExec(
     }
   }
 
-  override val nodeNamePrefix: String = "File"
+  override val nodeNamePrefix: String = "OapFile"
 
   /**
    * Create an RDD for bucketed reads.
