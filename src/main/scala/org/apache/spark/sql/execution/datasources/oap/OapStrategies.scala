@@ -131,7 +131,7 @@ trait OapStrategy extends Strategy with Logging {
           val outputAttributes = readDataColumns ++ partitionColumns
 
           val oapRelation = _fsRelation.copy(options = oapOption)(_fsRelation.sparkSession)
-          val scan = FileSourceScanExecAdapter.createFileSourceScanExec(
+          val scan = OapFileSourceScanExec(
             oapRelation,
             outputAttributes,
             outputSchema,
