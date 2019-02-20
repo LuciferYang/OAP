@@ -70,7 +70,6 @@ object HadoopFsRelationOptimizer extends Logging {
           val cacheEnabled = runtimeConf.get(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED)
           logDebug(s"config - ${OapConf.OAP_PARQUET_DATA_CACHE_ENABLED.key} is $cacheEnabled")
           val ret = cacheEnabled && runtimeConf.get(SQLConf.PARQUET_VECTORIZED_READER_ENABLED) &&
-//            runtimeConf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED) &&
             outputSchema.forall(_.dataType.isInstanceOf[AtomicType])
           if (ret) {
             logInfo("data cache enable and suitable for use , " +

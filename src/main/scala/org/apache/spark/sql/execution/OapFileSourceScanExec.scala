@@ -28,9 +28,8 @@ import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Ascending, Attribute, Expression, SortOrder, UnsafeProjection}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, UnknownPartitioning}
-import org.apache.spark.sql.execution.datasources.{BucketingUtils, DataSourceStrategy, FilePartition, FileScanRDD, HadoopFsRelation, PartitionDirectory, PartitionedFile}
+import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.oap.{OapFileFormat, OapMetricsManager, OptimizedParquetFileFormat}
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.types.StructType
@@ -39,7 +38,8 @@ import org.apache.spark.sql.types.StructType
  * Physical plan node for scanning data from HadoopFsRelations.
  *
  * @param relation         The file-based relation to scan.
- * @param output           Output attributes of the scan, including data attributes and partition attributes.
+ * @param output           Output attributes of the scan,
+ *                         including data attributes and partition attributes.
  * @param requiredSchema   Required schema of the underlying relation, excluding partition columns.
  * @param partitionFilters Predicates to use for partition pruning.
  * @param dataFilters      Filters on non-partition columns.
@@ -269,6 +269,7 @@ case class OapFileSourceScanExec(
       selectedPartitions: Seq[PartitionDirectory],
       fsRelation: HadoopFsRelation): RDD[InternalRow] = {
     logInfo(s"Planning with ${bucketSpec.numBuckets} buckets")
+    // TODO Bucketed Read RDD should know Oap data cache locations.
     val bucketed =
       selectedPartitions.flatMap { p =>
         p.files.map { f =>
@@ -311,6 +312,7 @@ case class OapFileSourceScanExec(
     logInfo(s"Planning scan with bin packing, max size: $maxSplitBytes bytes, " +
       s"open cost is considered as scanning $openCostInBytes bytes.")
 
+    // Use Oap not support file split, so no longer call `fileFormat.isSplitable`
     val splitFiles = selectedPartitions.flatMap { partition =>
       partition.files.flatMap { file =>
         val blockLocations = getBlockLocations(file)
