@@ -20,7 +20,7 @@ package org.apache.spark.sql.execution.datasources.oap
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, ProjectExec, SparkPlan}
+import org.apache.spark.sql.execution.{DataSourceScanExec, FileSourceScanExec, FilterExec, OapFileSourceScanExec, ProjectExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.hive.orc.OrcFileFormat
@@ -52,7 +52,8 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
   protected def verifyProjectFilterScan(
       indexColumn: String,
       verifyFileFormat: FileFormat => Boolean,
-      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean): Unit = {
+      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean,
+      verifyScanAndGetRelation: SparkPlan => HadoopFsRelation): Unit = {
     val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
     data.toDF("key", "value").createOrReplaceTempView("t")
     sql(s"insert overwrite table $testTableName select * from t")
@@ -76,8 +77,7 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
       assert(filter.children.length == 1)
 
       val scan = filter.children.head
-      assert(scan.isInstanceOf[FileSourceScanExec])
-      val relation = scan.asInstanceOf[FileSourceScanExec].relation
+      val relation = verifyScanAndGetRelation(scan)
       assert(relation.isInstanceOf[HadoopFsRelation])
       assert(verifyFileFormat(relation.fileFormat))
 
@@ -90,7 +90,8 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
 
   protected def verifyProjectScan(
       verifyFileFormat: FileFormat => Boolean,
-      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean): Unit = {
+      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean,
+      verifyScanAndGetRelation: SparkPlan => HadoopFsRelation): Unit = {
     val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
     data.toDF("key", "value").createOrReplaceTempView("t")
     sql(s"insert overwrite table $testTableName select * from t")
@@ -105,8 +106,7 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
     assert(optimizedSparkPlan.children.length == 1)
 
     val scan = optimizedSparkPlan.children.head
-    assert(scan.isInstanceOf[FileSourceScanExec])
-    val relation = scan.asInstanceOf[FileSourceScanExec].relation
+    val relation = verifyScanAndGetRelation(scan)
     assert(relation.isInstanceOf[HadoopFsRelation])
     assert(verifyFileFormat(relation.fileFormat))
 
@@ -118,7 +118,8 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
 
   protected def verifyScan(
       verifyFileFormat: FileFormat => Boolean,
-      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean): Unit = {
+      verifySparkPlan: (SparkPlan, SparkPlan) => Boolean,
+      verifyScanAndGetRelation: SparkPlan => HadoopFsRelation): Unit = {
     val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
     data.toDF("key", "value").createOrReplaceTempView("t")
     sql(s"insert overwrite table $testTableName select * from t")
@@ -127,8 +128,7 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
     val optimizedSparkPlans = OapFileSourceStrategy(plan)
     assert(optimizedSparkPlans.size == 1)
     val optimizedSparkPlan = optimizedSparkPlans.head
-    assert(optimizedSparkPlan.isInstanceOf[FileSourceScanExec])
-    val relation = optimizedSparkPlan.asInstanceOf[FileSourceScanExec].relation
+    val relation = verifyScanAndGetRelation(optimizedSparkPlan)
     assert(verifyFileFormat(relation.fileFormat))
 
     val sparkPlans = FileSourceStrategy(plan)
@@ -136,6 +136,16 @@ abstract class OapFileSourceStrategySuite extends QueryTest with SharedOapContex
     val sparkPlan = sparkPlans.head
 
     assert(verifySparkPlan(sparkPlan, optimizedSparkPlan))
+  }
+
+  protected def verifyOapScanAndGetRelation: SparkPlan => HadoopFsRelation = scan => {
+    assert(scan.isInstanceOf[OapFileSourceScanExec])
+    scan.asInstanceOf[OapFileSourceScanExec].relation
+  }
+
+  protected def verifyScanAndGetRelation: SparkPlan => HadoopFsRelation = scan => {
+    assert(scan.isInstanceOf[FileSourceScanExec])
+    scan.asInstanceOf[FileSourceScanExec].relation
   }
 }
 
@@ -148,7 +158,8 @@ class OapFileSourceStrategyForParquetSuite extends OapFileSourceStrategySuite {
     verifyProjectFilterScan(
       indexColumn = "b",
       format => format.isInstanceOf[OptimizedParquetFileFormat],
-      (plan1, plan2) => !plan1.sameResult(plan2)
+      (plan1, plan2) => !plan1.sameResult(plan2),
+      verifyOapScanAndGetRelation
     )
   }
 
@@ -156,7 +167,8 @@ class OapFileSourceStrategyForParquetSuite extends OapFileSourceStrategySuite {
     verifyProjectFilterScan(
       indexColumn = "a",
       format => format.isInstanceOf[ParquetFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 
@@ -164,7 +176,8 @@ class OapFileSourceStrategyForParquetSuite extends OapFileSourceStrategySuite {
     withSQLConf(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED.key -> "true") {
       verifyProjectScan(
         format => format.isInstanceOf[OptimizedParquetFileFormat],
-        (plan1, plan2) => !plan1.sameResult(plan2)
+        (plan1, plan2) => !plan1.sameResult(plan2),
+        verifyOapScanAndGetRelation
       )
     }
   }
@@ -172,14 +185,16 @@ class OapFileSourceStrategyForParquetSuite extends OapFileSourceStrategySuite {
   test("Project -> Scan : Not Optimized") {
     verifyProjectScan(
       format => format.isInstanceOf[ParquetFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 
   test("Scan : Not Optimized") {
     verifyScan(
       format => format.isInstanceOf[ParquetFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 }
@@ -193,7 +208,8 @@ class OapFileSourceStrategyForOrcSuite extends OapFileSourceStrategySuite {
     verifyProjectFilterScan(
       indexColumn = "b",
       format => format.isInstanceOf[OptimizedOrcFileFormat],
-      (plan1, plan2) => !plan1.sameResult(plan2)
+      (plan1, plan2) => !plan1.sameResult(plan2),
+      verifyOapScanAndGetRelation
     )
   }
 
@@ -201,21 +217,24 @@ class OapFileSourceStrategyForOrcSuite extends OapFileSourceStrategySuite {
     verifyProjectFilterScan(
       indexColumn = "a",
       format => format.isInstanceOf[OrcFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 
   test("Project -> Scan : Not Optimized") {
     verifyProjectScan(
       format => format.isInstanceOf[OrcFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 
   test("Scan : Not Optimized") {
     verifyScan(
       format => format.isInstanceOf[OrcFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => plan1.sameResult(plan2),
+      verifyScanAndGetRelation
     )
   }
 }
@@ -229,21 +248,24 @@ class OapFileSourceStrategyForOapSuite extends OapFileSourceStrategySuite {
     verifyProjectFilterScan(
       indexColumn = "b",
       format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => !plan1.sameResult(plan2),
+      verifyOapScanAndGetRelation
     )
   }
 
   test("Project -> Scan") {
     verifyProjectScan(
       format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => !plan1.sameResult(plan2),
+      verifyOapScanAndGetRelation
     )
   }
 
   test("Scan") {
     verifyScan(
       format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
+      (plan1, plan2) => !plan1.sameResult(plan2),
+      verifyOapScanAndGetRelation
     )
   }
 }

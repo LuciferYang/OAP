@@ -124,7 +124,7 @@ object HadoopFsRelationOptimizer extends Logging {
           relation.sparkSession,
           relation.options,
           selectedPartitions.flatMap(p => p.files))
-        (relation, false)
+        (relation, true)
 
       case _: FileFormat =>
         (relation, false)
