@@ -37,7 +37,7 @@ import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.oap.utils.CaseInsensitiveMap
 import org.apache.spark.sql.execution.joins.BuildRight
 import org.apache.spark.sql.internal.oap.OapConf
-import org.apache.spark.sql.oap.adapter.{AggregateFunctionAdapter, FileIndexAdapter, FileSourceScanExecAdapter, LogicalPlanAdapter}
+import org.apache.spark.sql.oap.adapter.{AggregateFunctionAdapter, FileIndexAdapter, LogicalPlanAdapter}
 import org.apache.spark.util.Utils
 
 trait OapStrategy extends Strategy with Logging {
