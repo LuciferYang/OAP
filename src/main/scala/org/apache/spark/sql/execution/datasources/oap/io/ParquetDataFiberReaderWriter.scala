@@ -25,7 +25,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.execution.datasources.OapException
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache
 import org.apache.spark.sql.execution.datasources.parquet.ParquetDictionaryWrapper
-import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector
+import org.apache.spark.sql.execution.vectorized.OapOnHeapColumnVector
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.Platform
@@ -41,7 +41,7 @@ import org.apache.spark.unsafe.Platform
  */
 object ParquetDataFiberWriter extends Logging {
 
-  def dumpToCache(column: OnHeapColumnVector, total: Int): FiberCache = {
+  def dumpToCache(column: OapOnHeapColumnVector, total: Int): FiberCache = {
     val header = ParquetDataFiberHeader(column, total)
     logDebug(s"will dump column to data fiber dataType = ${column.dataType()}, " +
       s"total = $total, header is $header")
@@ -92,7 +92,7 @@ object ParquetDataFiberWriter extends Logging {
    * Write nulls data to data fiber.
    */
   private def dumpNullsToFiber(
-      nativeAddress: Long, column: OnHeapColumnVector, total: Int): Long = {
+                                nativeAddress: Long, column: OapOnHeapColumnVector, total: Int): Long = {
     Platform.copyMemory(column.getNulls,
       Platform.BYTE_ARRAY_OFFSET, null, nativeAddress, total)
     nativeAddress + total
@@ -103,7 +103,10 @@ object ParquetDataFiberWriter extends Logging {
    * allNulls is false, need dump to cache,
    * dicLength is 0, needn't calculate dictionary part.
    */
-  private def dumpDataToFiber(nativeAddress: Long, column: OnHeapColumnVector, total: Int): Unit = {
+  private def dumpDataToFiber(
+                               nativeAddress: Long,
+                               column: OapOnHeapColumnVector,
+                               total: Int): Unit = {
     column.dataType match {
       case ByteType | BooleanType =>
         Platform.copyMemory(column.getByteData,
@@ -128,7 +131,7 @@ object ParquetDataFiberWriter extends Logging {
           Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
         Platform.copyMemory(column.getArrayOffsets,
           Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4, total * 4)
-        val child = column.getChild(0).asInstanceOf[OnHeapColumnVector]
+        val child = column.getChild(0).asInstanceOf[OapOnHeapColumnVector]
         Platform.copyMemory(child.getByteData,
           Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8,
           child.getElementsAppended)
@@ -143,7 +146,7 @@ object ParquetDataFiberWriter extends Logging {
           Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
         Platform.copyMemory(column.getArrayOffsets,
           Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4, total * 4)
-        val child = column.getChild(0).asInstanceOf[OnHeapColumnVector]
+        val child = column.getChild(0).asInstanceOf[OapOnHeapColumnVector]
         Platform.copyMemory(child.getByteData,
           Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8,
           child.getElementsAppended)
@@ -155,9 +158,9 @@ object ParquetDataFiberWriter extends Logging {
    * Write dictionaryIds(int array) and Dictionary data to data fiber.
    */
   private def dumpDataAndDicToFiber(
-      nativeAddress: Long, column: OnHeapColumnVector, total: Int, dicLength: Int): Unit = {
+                                     nativeAddress: Long, column: OapOnHeapColumnVector, total: Int, dicLength: Int): Unit = {
     // dump dictionaryIds to data fiber, it's a int array.
-    val dictionaryIds = column.getDictionaryIds.asInstanceOf[OnHeapColumnVector]
+    val dictionaryIds = column.getDictionaryIds.asInstanceOf[OapOnHeapColumnVector]
     Platform.copyMemory(dictionaryIds.getIntData,
       Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
     var dicNativeAddress = nativeAddress + total * 4
@@ -226,7 +229,7 @@ object ParquetDataFiberWriter extends Logging {
    * allNulls is false, need dump to cache,
    * dicLength is 0, needn't calculate dictionary part.
    */
-  private def fiberLength(column: OnHeapColumnVector, total: Int, nullUnitLength: Int): Long =
+  private def fiberLength(column: OapOnHeapColumnVector, total: Int, nullUnitLength: Int): Long =
     if (isFixedLengthDataType(column.dataType())) {
       logDebug(s"dataType ${column.dataType()} is fixed length. ")
       // Fixed length data type fiber length.
@@ -247,7 +250,7 @@ object ParquetDataFiberWriter extends Logging {
    * dicLength is not, need calculate dictionary part and dictionaryIds is a int array.
    */
   private def fiberLength(
-      column: OnHeapColumnVector, total: Int, nullUnitLength: Int, dicLength: Int): Long = {
+                           column: OapOnHeapColumnVector, total: Int, nullUnitLength: Int, dicLength: Int): Long = {
     val dicPartSize = column.dataType() match {
       case ByteType | ShortType | IntegerType | DateType => dicLength * 4
       case FloatType => dicLength * 4
@@ -309,10 +312,10 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
    * @param column target OnHeapColumnVector.
    */
   def readBatch(
-      start: Int, num: Int, column: OnHeapColumnVector): Unit = if (dictionary != null) {
+      start: Int, num: Int, column: OapOnHeapColumnVector): Unit = if (dictionary != null) {
     // Use dictionary encode, value store in dictionaryIds, it's a int array.
     column.setDictionary(dictionary)
-    val dictionaryIds = column.reserveDictionaryIds(num).asInstanceOf[OnHeapColumnVector]
+    val dictionaryIds = column.reserveDictionaryIds(num).asInstanceOf[OapOnHeapColumnVector]
     header match {
       case ParquetDataFiberHeader(true, false, _) =>
         val dataNativeAddress = address + ParquetDataFiberHeader.defaultSize
@@ -360,11 +363,11 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
    * @param rowIdList need rowId List
    * @param column target OnHeapColumnVector
    */
-  def readBatch(rowIdList: IntList, column: OnHeapColumnVector): Unit = if (dictionary != null) {
+  def readBatch(rowIdList: IntList, column: OapOnHeapColumnVector): Unit = if (dictionary != null) {
     // Use dictionary encode, value store in dictionaryIds, it's a int array.
     column.setDictionary(dictionary)
     val num = rowIdList.size()
-    val dictionaryIds = column.reserveDictionaryIds(num).asInstanceOf[OnHeapColumnVector]
+    val dictionaryIds = column.reserveDictionaryIds(num).asInstanceOf[OapOnHeapColumnVector]
     header match {
       case ParquetDataFiberHeader(true, false, _) =>
         val dataNativeAddress = address + ParquetDataFiberHeader.defaultSize
@@ -445,7 +448,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
    * not Dictionary encode.
    */
   private def readBatch(
-      dataNativeAddress: Long, start: Int, num: Int, column: OnHeapColumnVector): Unit = {
+      dataNativeAddress: Long, start: Int, num: Int, column: OapOnHeapColumnVector): Unit = {
 
     def readBinaryToColumnVector(): Unit = {
       Platform.copyMemory(null,
@@ -480,7 +483,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         Platform.copyMemory(null,
           dataNativeAddress + total * 8 + startOffset,
           data, Platform.BYTE_ARRAY_OFFSET, data.length)
-        column.getChild(0).asInstanceOf[OnHeapColumnVector].setByteData(data)
+        column.getChild(0).asInstanceOf[OapOnHeapColumnVector].setByteData(data)
       }
     }
 
@@ -530,7 +533,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
    * read value one by one, not Dictionary encode.
    */
   private def readBatch(
-      dataNativeAddress: Long, rowIdList: IntList, column: OnHeapColumnVector): Unit = {
+      dataNativeAddress: Long, rowIdList: IntList, column: OapOnHeapColumnVector): Unit = {
 
     def readBinaryToColumnVector(): Unit = {
       val arrayLengths = column.getArrayLengths
@@ -538,7 +541,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
       val offsetsStart = total * 4
       val dataStart = total * 8
       var offset = 0
-      val childColumn = column.getChild(0).asInstanceOf[OnHeapColumnVector]
+      val childColumn = column.getChild(0).asInstanceOf[OapOnHeapColumnVector]
       (0 until rowIdList.size()).foreach(idx => {
         if (!column.isNullAt(idx)) {
           val rowId = rowIdList.getInt(idx)
@@ -790,7 +793,7 @@ case class ParquetDataFiberHeader(noNulls: Boolean, allNulls: Boolean, dicLength
  */
 object ParquetDataFiberHeader {
 
-  def apply(vector: OnHeapColumnVector, total: Int): ParquetDataFiberHeader = {
+  def apply(vector: OapOnHeapColumnVector, total: Int): ParquetDataFiberHeader = {
     val numNulls = vector.numNulls
     val allNulls = numNulls == total
     val noNulls = numNulls == 0

@@ -263,7 +263,7 @@ class VectorizedCacheReader(
     for (i <- fiberReaders.indices) {
       if (fiberReaders(i) != null) {
         fiberReaders(i).readBatch(currentRowGroupRowsReturned, num, columnVectors(i)
-          .asInstanceOf[OnHeapColumnVector])
+          .asInstanceOf[OapOnHeapColumnVector])
       }
     }
 
