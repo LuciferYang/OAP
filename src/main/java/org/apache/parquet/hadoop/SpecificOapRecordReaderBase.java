@@ -51,6 +51,7 @@ public abstract class SpecificOapRecordReaderBase<T> implements RecordReader<T> 
      */
     protected long totalRowCount;
     protected OapParquetFileReader reader;
+    protected boolean indexAble;
 
     /**
      *
@@ -63,7 +64,8 @@ public abstract class SpecificOapRecordReaderBase<T> implements RecordReader<T> 
     protected void initialize(
         ParquetMetadata footer,
         Configuration configuration,
-        boolean isFilterRowGroups) throws IOException, InterruptedException {
+        boolean isFilterRowGroups,
+        boolean indexAble) throws IOException, InterruptedException {
       this.fileSchema = footer.getFileMetaData().getSchema();
       Map<String, String> fileMetadata = footer.getFileMetaData().getKeyValueMetaData();
       ReadSupport.ReadContext readContext = new ParquetReadSupportWrapper().init(new InitContext(
@@ -80,6 +82,7 @@ public abstract class SpecificOapRecordReaderBase<T> implements RecordReader<T> 
       for (BlockMetaData block : this.reader.getRowGroups()) {
         this.totalRowCount += block.getRowCount();
       }
+      this.indexAble = indexAble;
     }
 
     @Override

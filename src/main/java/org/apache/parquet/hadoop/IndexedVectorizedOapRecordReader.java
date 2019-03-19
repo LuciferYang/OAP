@@ -28,6 +28,8 @@ import org.apache.parquet.hadoop.metadata.ParquetFooter;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 
+import org.apache.spark.sql.execution.vectorized.IndexedOnHeapColumnVector;
+import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.oap.adapter.CapacityAdapter;
 
 public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader {
@@ -76,7 +78,7 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
   @Override
   public void initialize() throws IOException, InterruptedException {
     // use indexedFooter read data, need't do filterRowGroups.
-    initialize(footer.toParquetMetadata(globalRowIds), configuration, false);
+    initialize(footer.toParquetMetadata(globalRowIds), configuration, false, true);
     super.initializeInternal();
   }
 
@@ -91,7 +93,7 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
       batchIdx <= numBatched, "batchIdx can not be more than numBatched");
     Preconditions.checkArgument(batchIdx >= 1, "call nextKeyValue before getCurrentValue");
     // batchIds (IntArrayList) is random access.
-    return columnarBatch.getRow(batchIds.get(batchIdx - 1));
+    return columnarBatch.getRow(batchIdx - 1);
   }
 
   /**
@@ -164,9 +166,11 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
     }
 
     nextBatchInternal();
-    if (!returnColumnarBatch) {
-      batchIds = ids;
-      numBatched = ids.size();
+    batchIds = ids;
+    numBatched = ids.size();
+    columnarBatch.setNumRows(numBatched);
+    for (WritableColumnVector columnVector : columnVectors) {
+      ((IndexedOnHeapColumnVector)columnVector).updateIndexList(ids);
     }
     return true;
   }

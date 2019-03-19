@@ -363,9 +363,7 @@ class VectorizedDataSuite extends ParquetDataFileSuite {
         result += row.getInt(0)
       }
     }
-    for (i <- rowIds.indices) {
-      assert(result.contains(i))
-    }
+    rowIds.foreach(id => assert(result.contains(id)))
   }
 
   test("read by columnIds and empty rowIds array disable returningBatch") {
