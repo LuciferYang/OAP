@@ -28,7 +28,13 @@ import org.apache.parquet.hadoop.metadata.ParquetFooter;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 
+import org.apache.spark.memory.MemoryMode;
+import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.execution.vectorized.IndexedReadOnlyColumnVector;
 import org.apache.spark.sql.oap.adapter.CapacityAdapter;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 
 public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader {
 
@@ -43,6 +49,11 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
   // for returnColumnarBatch is false branch,
   // secondary indexes to call columnarBatch.getRow
   private IntList batchIds;
+
+  private ColumnVector[] indexedColumns;
+
+  private ColumnarBatch indexedColumnarBatch;
+
 
   private static final String IDS_MAP_STATE_ERROR_MSG =
     "The divideRowIdsIntoPages method should not be called when idsMap is not empty.";
@@ -81,9 +92,24 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
   }
 
   @Override
+  public void initBatch(
+      MemoryMode memMode,
+      StructType partitionColumns,
+      InternalRow partitionValues) {
+    super.initBatch(memMode, partitionColumns, partitionValues);
+    int numCols = columnarBatch.numCols();
+    indexedColumns = new IndexedReadOnlyColumnVector[numCols];
+    IntArrayList emptyIdList = new IntArrayList(0);
+    for (int i = 0; i < numCols; i++) {
+      indexedColumns[i] = new IndexedReadOnlyColumnVector(columnarBatch.column(i), emptyIdList);
+    }
+    indexedColumnarBatch = new ColumnarBatch(indexedColumns);
+  }
+
+  @Override
   public Object getCurrentValue() throws IOException, InterruptedException {
     if (returnColumnarBatch) {
-      return columnarBatch;
+      return updateIndexedColumnarBatch();
     }
     Preconditions.checkNotNull(batchIds,
       "returnColumnarBatch = false, batchIds must not null.");
@@ -164,10 +190,8 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
     }
 
     nextBatchInternal();
-    if (!returnColumnarBatch) {
-      batchIds = ids;
-      numBatched = ids.size();
-    }
+    batchIds = ids;
+    numBatched = ids.size();
     return true;
   }
 
@@ -207,5 +231,13 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
     rowsReturned += CAPACITY;
     numBatched = CAPACITY;
     batchIdx = 0;
+  }
+
+  private ColumnarBatch updateIndexedColumnarBatch() {
+    for (int i = 0; i < indexedColumnarBatch.numCols(); i++) {
+      ((IndexedReadOnlyColumnVector) indexedColumnarBatch.column(i)).updateIndexList(batchIds);
+    }
+    indexedColumnarBatch.setNumRows(batchIds.size());
+    return indexedColumnarBatch;
   }
 }
