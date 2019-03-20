@@ -99,7 +99,7 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
     super.initBatch(memMode, partitionColumns, partitionValues);
     int numCols = columnarBatch.numCols();
     indexedColumns = new IndexedReadOnlyColumnVector[numCols];
-    IntArrayList emptyIdList = new IntArrayList(0);
+    IntList emptyIdList = new IntArrayList(0);
     for (int i = 0; i < numCols; i++) {
       indexedColumns[i] = new IndexedReadOnlyColumnVector(columnarBatch.column(i), emptyIdList);
     }
