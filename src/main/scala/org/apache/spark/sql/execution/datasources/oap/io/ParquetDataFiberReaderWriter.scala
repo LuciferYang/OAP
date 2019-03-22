@@ -231,13 +231,13 @@ object ParquetDataFiberWriter extends Logging {
       logDebug(s"dataType ${column.dataType()} is fixed length. ")
       // Fixed length data type fiber length.
       ParquetDataFiberHeader.defaultSize +
-        nullUnitLength * total * 1L + column.dataType().defaultSize * total * 1L
+        nullUnitLength * total + column.dataType().defaultSize.toLong * total
     } else {
       logDebug(s"dataType ${column.dataType()} is not fixed length. ")
       // lengthData and offsetData will be set and data will be put in child if type is Array.
       // lengthData: 4 bytes, offsetData: 4 bytes, nulls: 1 byte,
       // child.data: childColumns[0].elementsAppended bytes.
-      ParquetDataFiberHeader.defaultSize + nullUnitLength * total * 1L + total * 8L +
+      ParquetDataFiberHeader.defaultSize + nullUnitLength * total + total * 8L +
         column.getChild(0).getElementsAppended
     }
 
