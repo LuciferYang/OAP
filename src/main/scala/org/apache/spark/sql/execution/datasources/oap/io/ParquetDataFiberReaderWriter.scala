@@ -431,8 +431,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         dictionary =
           new ParquetDictionaryWrapper(readDictionary(dataType, dicLength, dicNativeAddress))
       case ParquetDataFiberHeader(false, false, dicLength) =>
-        val dicNativeAddress =
-          address + ParquetDataFiberHeader.defaultSize + 1 * total + 4L * total
+        val dicNativeAddress = address + ParquetDataFiberHeader.defaultSize + 1 * total + 4L * total
         dictionary =
           new ParquetDictionaryWrapper(readDictionary(dataType, dicLength, dicNativeAddress))
       case ParquetDataFiberHeader(true, true, _) =>
@@ -576,8 +575,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         val ints = column.getIntData
         (0 until rowIdList.size()).foreach(idx => {
           if (!column.isNullAt(idx)) {
-            ints(idx) =
-              Platform.getInt(null, dataNativeAddress + rowIdList.getInt(idx) * 4L)
+            ints(idx) = Platform.getInt(null, dataNativeAddress + rowIdList.getInt(idx) * 4L)
           }
         })
       case FloatType =>
