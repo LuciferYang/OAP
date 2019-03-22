@@ -380,7 +380,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         (0 until num).foreach(idx => {
           nulls(idx) = Platform.getByte(null, nullsNativeAddress + rowIdList.getInt(idx))
         })
-        val dataNativeAddress = nullsNativeAddress + 1L * total
+        val dataNativeAddress = nullsNativeAddress + 1 * total
         (0 until num).foreach(idx => {
           if (!column.isNullAt(idx)) {
             intData(idx) = Platform.getInt(null,
@@ -406,7 +406,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         (0 until num).foreach(idx => {
           nulls(idx) = Platform.getByte(null, nullsNativeAddress + rowIdList.getInt(idx))
         })
-        val dataNativeAddress = nullsNativeAddress + 1L * total
+        val dataNativeAddress = nullsNativeAddress + 1 * total
         readBatch(dataNativeAddress, rowIdList, column)
       case ParquetDataFiberHeader(false, true, _) =>
         column.putNulls(0, num)
