@@ -50,8 +50,6 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
   // secondary indexes to call columnarBatch.getRow
   private IntList batchIds;
 
-  private ColumnVector[] indexedColumns;
-
   private ColumnarBatch indexedColumnarBatch;
 
 
@@ -98,7 +96,7 @@ public class IndexedVectorizedOapRecordReader extends VectorizedOapRecordReader 
       InternalRow partitionValues) {
     super.initBatch(memMode, partitionColumns, partitionValues);
     int numCols = columnarBatch.numCols();
-    indexedColumns = new IndexedReadOnlyColumnVector[numCols];
+    ColumnVector[] indexedColumns = new IndexedReadOnlyColumnVector[numCols];
     IntList emptyIdList = new IntArrayList(0);
     for (int i = 0; i < numCols; i++) {
       indexedColumns[i] = new IndexedReadOnlyColumnVector(columnarBatch.column(i), emptyIdList);
