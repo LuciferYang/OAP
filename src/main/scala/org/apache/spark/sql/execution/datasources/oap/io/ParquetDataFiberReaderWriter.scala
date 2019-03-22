@@ -323,7 +323,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         val nullsNativeAddress = address + ParquetDataFiberHeader.defaultSize
         Platform.copyMemory(null,
           nullsNativeAddress + start, column.getNulls, Platform.BYTE_ARRAY_OFFSET, num)
-        val dataNativeAddress = nullsNativeAddress + 1L * total
+        val dataNativeAddress = nullsNativeAddress + 1 * total
         Platform.copyMemory(null,
           dataNativeAddress + start * 4L,
           dictionaryIds.getIntData, Platform.INT_ARRAY_OFFSET, num * 4L)
@@ -344,7 +344,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
         val nullsNativeAddress = address + ParquetDataFiberHeader.defaultSize
         Platform.copyMemory(null,
           nullsNativeAddress + start, column.getNulls, Platform.BYTE_ARRAY_OFFSET, num)
-        val dataNativeAddress = nullsNativeAddress + 1L * total
+        val dataNativeAddress = nullsNativeAddress + 1 * total
         readBatch(dataNativeAddress, start, num, column)
       case ParquetDataFiberHeader(false, true, _) =>
         column.putNulls(0, num)
@@ -432,7 +432,7 @@ class ParquetDataFiberReader private(address: Long, dataType: DataType, total: I
           new ParquetDictionaryWrapper(readDictionary(dataType, dicLength, dicNativeAddress))
       case ParquetDataFiberHeader(false, false, dicLength) =>
         val dicNativeAddress =
-          address + ParquetDataFiberHeader.defaultSize + 1L * total + 4L * total
+          address + ParquetDataFiberHeader.defaultSize + 1 * total + 4L * total
         dictionary =
           new ParquetDictionaryWrapper(readDictionary(dataType, dicLength, dicNativeAddress))
       case ParquetDataFiberHeader(true, true, _) =>
