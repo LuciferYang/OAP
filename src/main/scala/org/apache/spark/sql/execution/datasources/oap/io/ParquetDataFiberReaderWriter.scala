@@ -110,42 +110,42 @@ object ParquetDataFiberWriter extends Logging {
           Platform.BYTE_ARRAY_OFFSET, null, nativeAddress, total)
       case ShortType =>
         Platform.copyMemory(column.getShortData,
-          Platform.SHORT_ARRAY_OFFSET, null, nativeAddress, total * 2)
+          Platform.SHORT_ARRAY_OFFSET, null, nativeAddress, total * 2L)
       case IntegerType | DateType =>
         Platform.copyMemory(column.getIntData,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
       case FloatType =>
         Platform.copyMemory(column.getFloatData,
-          Platform.FLOAT_ARRAY_OFFSET, null, nativeAddress, total * 4)
+          Platform.FLOAT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
       case LongType | TimestampType =>
         Platform.copyMemory(column.getLongData,
-          Platform.LONG_ARRAY_OFFSET, null, nativeAddress, total * 8)
+          Platform.LONG_ARRAY_OFFSET, null, nativeAddress, total * 8L)
       case DoubleType =>
         Platform.copyMemory(column.getDoubleData,
-          Platform.DOUBLE_ARRAY_OFFSET, null, nativeAddress, total * 8)
+          Platform.DOUBLE_ARRAY_OFFSET, null, nativeAddress, total * 8L)
       case StringType | BinaryType =>
         Platform.copyMemory(column.getArrayLengths,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
         Platform.copyMemory(column.getArrayOffsets,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4L, total * 4L)
         val child = column.getChild(0).asInstanceOf[OnHeapColumnVector]
         Platform.copyMemory(child.getByteData,
-          Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8,
+          Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8L,
           child.getElementsAppended)
       case other if DecimalType.is32BitDecimalType(other) =>
         Platform.copyMemory(column.getIntData,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
       case other if DecimalType.is64BitDecimalType(other) =>
         Platform.copyMemory(column.getLongData,
-          Platform.LONG_ARRAY_OFFSET, null, nativeAddress, total * 8)
+          Platform.LONG_ARRAY_OFFSET, null, nativeAddress, total * 8L)
       case other if DecimalType.isByteArrayDecimalType(other) =>
         Platform.copyMemory(column.getArrayLengths,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
         Platform.copyMemory(column.getArrayOffsets,
-          Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4, total * 4)
+          Platform.INT_ARRAY_OFFSET, null, nativeAddress + total * 4L, total * 4L)
         val child = column.getChild(0).asInstanceOf[OnHeapColumnVector]
         Platform.copyMemory(child.getByteData,
-          Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8,
+          Platform.BYTE_ARRAY_OFFSET, null, nativeAddress + total * 8L,
           child.getElementsAppended)
       case other => throw new OapException(s"$other data type is not support data cache.")
     }
