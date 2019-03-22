@@ -231,13 +231,13 @@ object ParquetDataFiberWriter extends Logging {
       logDebug(s"dataType ${column.dataType()} is fixed length. ")
       // Fixed length data type fiber length.
       ParquetDataFiberHeader.defaultSize +
-        nullUnitLength * total + column.dataType().defaultSize * total
+        nullUnitLength * total * 1L + column.dataType().defaultSize * total * 1L
     } else {
       logDebug(s"dataType ${column.dataType()} is not fixed length. ")
       // lengthData and offsetData will be set and data will be put in child if type is Array.
       // lengthData: 4 bytes, offsetData: 4 bytes, nulls: 1 byte,
       // child.data: childColumns[0].elementsAppended bytes.
-      ParquetDataFiberHeader.defaultSize + nullUnitLength * total + total * 8 +
+      ParquetDataFiberHeader.defaultSize + nullUnitLength * total * 1L + total * 8L +
         column.getChild(0).getElementsAppended
     }
 
@@ -249,24 +249,24 @@ object ParquetDataFiberWriter extends Logging {
   private def fiberLength(
       column: OnHeapColumnVector, total: Int, nullUnitLength: Int, dicLength: Int): Long = {
     val dicPartSize = column.dataType() match {
-      case ByteType | ShortType | IntegerType | DateType => dicLength * 4
-      case FloatType => dicLength * 4
-      case LongType | TimestampType => dicLength * 8
-      case DoubleType => dicLength * 8
+      case ByteType | ShortType | IntegerType | DateType => dicLength * 4L
+      case FloatType => dicLength * 4L
+      case LongType | TimestampType => dicLength * 8L
+      case DoubleType => dicLength * 8L
       case StringType | BinaryType =>
         val dictionary = column.getDictionary
-        (0 until dicLength).map(id => dictionary.decodeToBinary(id).length + 4).sum
+        (0 until dicLength).map(id => dictionary.decodeToBinary(id).length + 4L).sum
       // if DecimalType.is32BitDecimalType(other) as int data type
-      case other if DecimalType.is32BitDecimalType(other) => dicLength * 4
+      case other if DecimalType.is32BitDecimalType(other) => dicLength * 4L
       // if DecimalType.is64BitDecimalType(other) as long data type
-      case other if DecimalType.is64BitDecimalType(other) => dicLength * 8
+      case other if DecimalType.is64BitDecimalType(other) => dicLength * 8L
       // if DecimalType.isByteArrayDecimalType(other) as binary data type
       case other if DecimalType.isByteArrayDecimalType(other) =>
         val dictionary = column.getDictionary
-        (0 until dicLength).map(id => dictionary.decodeToBinary(id).length + 4).sum
+        (0 until dicLength).map(id => dictionary.decodeToBinary(id).length + 4L).sum
       case other => throw new OapException(s"$other data type is not support dictionary.")
     }
-    ParquetDataFiberHeader.defaultSize + nullUnitLength * total + 4 * total + dicPartSize
+    ParquetDataFiberHeader.defaultSize + nullUnitLength * total * 1L + 4L * total + dicPartSize
   }
 
   private def isFixedLengthDataType(dataType: DataType): Boolean = dataType match {
