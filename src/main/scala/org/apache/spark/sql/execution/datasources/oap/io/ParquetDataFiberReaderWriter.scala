@@ -266,7 +266,7 @@ object ParquetDataFiberWriter extends Logging {
         (0 until dicLength).map(id => dictionary.decodeToBinary(id).length + 4L).sum
       case other => throw new OapException(s"$other data type is not support dictionary.")
     }
-    ParquetDataFiberHeader.defaultSize + nullUnitLength * total * 1L + 4L * total + dicPartSize
+    ParquetDataFiberHeader.defaultSize + nullUnitLength * total + 4L * total + dicPartSize
   }
 
   private def isFixedLengthDataType(dataType: DataType): Boolean = dataType match {
