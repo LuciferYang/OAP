@@ -159,8 +159,8 @@ object ParquetDataFiberWriter extends Logging {
     // dump dictionaryIds to data fiber, it's a int array.
     val dictionaryIds = column.getDictionaryIds.asInstanceOf[OnHeapColumnVector]
     Platform.copyMemory(dictionaryIds.getIntData,
-      Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4)
-    var dicNativeAddress = nativeAddress + total * 4
+      Platform.INT_ARRAY_OFFSET, null, nativeAddress, total * 4L)
+    var dicNativeAddress = nativeAddress + total * 4L
     val dictionary = column.getDictionary
     // dump dictionary to data fiber case by dataType.
     column.dataType() match {
@@ -168,25 +168,25 @@ object ParquetDataFiberWriter extends Logging {
         val intDictionaryContent = new Array[Int](dicLength)
         (0 until dicLength).foreach(id => intDictionaryContent(id) = dictionary.decodeToInt(id))
         Platform.copyMemory(intDictionaryContent, Platform.INT_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 4)
+          dicNativeAddress, dicLength * 4L)
       case FloatType =>
         val floatDictionaryContent = new Array[Float](dicLength)
         (0 until dicLength).foreach(id => floatDictionaryContent(id) = dictionary.decodeToFloat(id))
         Platform.copyMemory(floatDictionaryContent, Platform.FLOAT_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 4)
+          dicNativeAddress, dicLength * 4L)
       case LongType | TimestampType =>
         val longDictionaryContent = new Array[Long](dicLength)
         (0 until dicLength).foreach(id => longDictionaryContent(id) = dictionary.decodeToLong(id))
         Platform.copyMemory(longDictionaryContent, Platform.LONG_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 8)
+          dicNativeAddress, dicLength * 8L)
       case DoubleType =>
         val doubleDictionaryContent = new Array[Double](dicLength)
         (0 until dicLength).foreach(id =>
           doubleDictionaryContent(id) = dictionary.decodeToDouble(id))
         Platform.copyMemory(doubleDictionaryContent, Platform.DOUBLE_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 8);
+          dicNativeAddress, dicLength * 8L);
       case StringType | BinaryType =>
-        var bytesNativeAddress = dicNativeAddress + 4 * dicLength
+        var bytesNativeAddress = dicNativeAddress + 4L * dicLength
         (0 until dicLength).foreach( id => {
           val binary = dictionary.decodeToBinary(id)
           val length = binary.length
@@ -200,14 +200,14 @@ object ParquetDataFiberWriter extends Logging {
         val intDictionaryContent = new Array[Int](dicLength)
         (0 until dicLength).foreach(id => intDictionaryContent(id) = dictionary.decodeToInt(id))
         Platform.copyMemory(intDictionaryContent, Platform.INT_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 4)
+          dicNativeAddress, dicLength * 4L)
       case other if DecimalType.is64BitDecimalType(other) =>
         val longDictionaryContent = new Array[Long](dicLength)
         (0 until dicLength).foreach(id => longDictionaryContent(id) = dictionary.decodeToLong(id))
         Platform.copyMemory(longDictionaryContent, Platform.LONG_ARRAY_OFFSET, null,
-          dicNativeAddress, dicLength * 8)
+          dicNativeAddress, dicLength * 8L)
       case other if DecimalType.isByteArrayDecimalType(other) =>
-        var bytesNativeAddress = dicNativeAddress + 4 * dicLength
+        var bytesNativeAddress = dicNativeAddress + 4L * dicLength
         (0 until dicLength).foreach( id => {
           val binary = dictionary.decodeToBinary(id)
           val length = binary.length
