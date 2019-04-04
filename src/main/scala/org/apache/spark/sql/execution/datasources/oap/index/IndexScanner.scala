@@ -340,7 +340,8 @@ private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
     } else {
       if (analysisResults.forall(_._2 != StatsAnalysisResult.SKIP_INDEX)) {
         // OAP#1031 we should filter FULL_SCAN when USE_INDEX scene
-        // because of FULL_SCAN may come from index file not exists in this partition.
+        // because of FULL_SCAN may come from index file not exists in this partition and
+        // FULL_SCAN Scanner needn't initialize index data.
         actualUsedScanners =
             analysisResults.filter(_._2 != StatsAnalysisResult.FULL_SCAN).map(_._1)
       }
