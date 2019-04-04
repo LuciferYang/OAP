@@ -110,7 +110,7 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
     }
   }
 
-  test("index not exists") {
+  test("OAP#1031- query failed when Some index file not exists") {
     val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
     data.toDF("key", "value").createOrReplaceTempView("t")
     sql("insert overwrite table parquet_test select * from t")
@@ -129,7 +129,7 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
         })
         files.foreach(f => fs.delete(f.getPath, true))
 
-        // push down indexScanners a and b , b not exists.
+        // push down indexScanners a and b , but b not exists.
         val df = sql("SELECT b FROM parquet_test WHERE b = 'this is test 1' and a = 1")
         checkAnswer(df, Row("this is test 1") :: Nil)
       }
