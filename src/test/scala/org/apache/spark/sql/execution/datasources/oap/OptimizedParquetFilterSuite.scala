@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution.datasources.oap
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.hadoop.fs.{Path, PathFilter}
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{QueryTest, Row}
@@ -105,6 +106,32 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
             case _ => assert(false)
           }
         )
+      }
+    }
+  }
+
+  test("index not exists") {
+    val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
+    data.toDF("key", "value").createOrReplaceTempView("t")
+    sql("insert overwrite table parquet_test select * from t")
+
+    withIndex(TestIndex("parquet_test", "index1"), TestIndex("parquet_test", "index2")) {
+      withSQLConf(OapConf.OAP_INDEXER_CHOICE_MAX_SIZE.key -> "2") {
+        // create 2 index
+        sql("create oindex index1 on parquet_test (b)")
+        sql("create oindex index2 on parquet_test (a)")
+
+        // manually delete one
+        val path = new Path(currentPath)
+        val fs = path.getFileSystem(configuration)
+        val files = fs.listStatus(path, new PathFilter() {
+          override def accept(path: Path): Boolean = path.getName.contains("index1")
+        })
+        files.foreach(f => fs.delete(f.getPath, true))
+
+        // push down indexScanners a and b , b not exists.
+        val df = sql("SELECT b FROM parquet_test WHERE b = 'this is test 1' and a = 1")
+        checkAnswer(df, Row("this is test 1") :: Nil)
       }
     }
   }

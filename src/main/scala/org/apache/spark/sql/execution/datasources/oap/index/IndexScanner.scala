@@ -339,7 +339,8 @@ private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
       false
     } else {
       if (analysisResults.forall(_._2 != StatsAnalysisResult.SKIP_INDEX)) {
-        actualUsedScanners = analysisResults.map(_._1)
+        actualUsedScanners =
+            analysisResults.filter(_._2 != StatsAnalysisResult.FULL_SCAN).map(_._1)
       }
       true
     }
