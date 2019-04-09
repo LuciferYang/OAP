@@ -343,7 +343,7 @@ private[oap] class IndexScanners(val scanners: Seq[IndexScanner])
         // because of FULL_SCAN may come from index file not exists in this partition and
         // FULL_SCAN Scanner needn't initialize index data.
         actualUsedScanners =
-            analysisResults.filter(_._2 != StatsAnalysisResult.FULL_SCAN).map(_._1)
+          analysisResults.filter(_._2 != StatsAnalysisResult.FULL_SCAN).map(_._1)
       }
       true
     }
