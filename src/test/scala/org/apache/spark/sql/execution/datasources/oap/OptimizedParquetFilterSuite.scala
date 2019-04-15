@@ -19,7 +19,6 @@ package org.apache.spark.sql.execution.datasources.oap
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.hadoop.fs.{Path, PathFilter}
 import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.sql.{QueryTest, Row}
