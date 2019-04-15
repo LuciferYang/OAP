@@ -115,7 +115,7 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
     }
   }
 
-  test("Index can be used when timestamps is constant on partitioned table") {
+  test("OAP#1038 Index can be used when timestamps is constant on partitioned table") {
     val data: Seq[(Int, String, Int)] = (1 to 300).map { i => (i, s"this is test $i", i % 2) }
     data.toDF("key", "value1", "value2").createOrReplaceTempView("t")
     sql(
