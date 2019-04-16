@@ -500,6 +500,60 @@ public final class OnHeapColumnVector extends WritableColumnVector {
     return result;
   }
 
+  public byte[] getNulls() {
+    return nulls;
+  }
+
+  public byte[] getByteData() {
+    return byteData;
+  }
+
+  public short[] getShortData() {
+    return shortData;
+  }
+
+  public int[] getIntData() {
+    return intData;
+  }
+
+  public long[] getLongData() {
+    return longData;
+  }
+
+  public float[] getFloatData() {
+    return floatData;
+  }
+
+  public double[] getDoubleData() {
+    return doubleData;
+  }
+
+  public int[] getArrayLengths() {
+    return arrayLengths;
+  }
+
+  public int[] getArrayOffsets() {
+    return arrayOffsets;
+  }
+
+  public void setByteData(byte[] byteData) {
+    this.byteData = byteData;
+  }
+
+  public Dictionary getDictionary() {
+    return this.dictionary;
+  }
+
+  public int dictionaryLength() {
+    if(dictionary ==  null) {
+      return 0;
+    } else if (dictionary instanceof  ParquetDictionaryWrapper) {
+      return ((ParquetDictionaryWrapper)dictionary).getMaxId() + 1;
+    } else {
+      throw new UnsupportedOperationException("this api only use by oap");
+    }
+  }
+
   // Spilt this function out since it is the slow path.
   @Override
   protected void reserveInternal(int newCapacity) {

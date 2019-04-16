@@ -312,7 +312,8 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
   // Force initializing SparkSQLEnv. This is put here but not object SparkSQLCliDriver
   // because the Hive unit tests do not go through the main() code path.
   if (!isRemoteMode) {
-    SparkSQLEnv.init()
+    // for OAP
+    OapEnv.init()
     if (sessionState.getIsSilent) {
       SparkSQLEnv.sparkContext.setLogLevel(Level.WARN.toString)
     }
@@ -321,9 +322,10 @@ private[hive] class SparkSQLCLIDriver extends CliDriver with Logging {
     throw new RuntimeException("Remote operations not supported")
   }
 
-  override def setHiveVariables(hiveVariables: java.util.Map[String, String]): Unit = {
-    hiveVariables.asScala.foreach(kv => SparkSQLEnv.sqlContext.conf.setConfString(kv._1, kv._2))
-  }
+  // Comment for OAP
+  //  override def setHiveVariables(hiveVariables: java.util.Map[String, String]): Unit = {
+  //    hiveVariables.asScala.foreach(kv => SparkSQLEnv.sqlContext.conf.setConfString(kv._1, kv._2))
+  //  }
 
   def printMasterAndAppId(): Unit = {
     val master = SparkSQLEnv.sparkContext.master

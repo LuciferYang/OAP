@@ -161,6 +161,7 @@ statement
     | (DESC | DESCRIBE) TABLE? option=(EXTENDED | FORMATTED)?
         tableIdentifier partitionSpec? describeColName?                #describeTable
     | REFRESH TABLE tableIdentifier                                    #refreshTable
+    | REFRESH SINDEX ON tableIdentifier partitionSpec?                 #oapRefreshIndices
     | REFRESH (STRING | .*?)                                           #refreshResource
     | CACHE LAZY? TABLE tableIdentifier (AS? query)?                   #cacheTable
     | UNCACHE TABLE (IF EXISTS)? tableIdentifier                       #uncacheTable
@@ -173,7 +174,29 @@ statement
     | SET ROLE .*?                                                     #failNativeCommand
     | SET .*?                                                          #setConfiguration
     | RESET                                                            #resetConfiguration
+    | CREATE SINDEX (IF NOT EXISTS)? IDENTIFIER ON
+        tableIdentifier indexCols (USING indexType)?
+        partitionSpec?                                                 #oapCreateIndex
+    | DROP SINDEX (IF EXISTS)? IDENTIFIER ON tableIdentifier
+        partitionSpec?                                                 #oapDropIndex
+    | DISABLE SINDEX IDENTIFIER                                        #oapDisableIndex
+    | ENABLE SINDEX IDENTIFIER                                         #oapEnableIndex
+    | SHOW SINDEX (FROM | IN) tableIdentifier                          #oapShowIndex
+    | CHECK SINDEX ON tableIdentifier partitionSpec?                   #oapCheckIndex
     | unsupportedHiveNativeCommands .*?                                #failNativeCommand
+    ;
+
+indexCols
+    : '(' indexCol (',' indexCol)* ')'
+    ;
+
+indexCol
+    : identifier (ASC | DESC)?
+    ;
+
+indexType
+    : BTREE
+    | BITMAP
     ;
 
 unsupportedHiveNativeCommands
@@ -776,6 +799,8 @@ nonReserved
     | DATABASE | SELECT | FROM | WHERE | HAVING | TO | TABLE | WITH | NOT
     | DIRECTORY
     | BOTH | LEADING | TRAILING
+    | CHECK
+    | DISABLE | ENABLE
     ;
 
 SELECT: 'SELECT';
@@ -894,6 +919,8 @@ IGNORE: 'IGNORE';
 BOTH: 'BOTH';
 LEADING: 'LEADING';
 TRAILING: 'TRAILING';
+DISABLE: 'DISABLE';
+ENABLE: 'ENABLE';
 
 IF: 'IF';
 POSITION: 'POSITION';
@@ -1012,6 +1039,13 @@ OPTION: 'OPTION';
 ANTI: 'ANTI';
 LOCAL: 'LOCAL';
 INPATH: 'INPATH';
+
+CHECK: 'CHECK';
+SINDEX: 'SINDEX' | 'OINDEX';
+SINDICES: 'SINDICES' | 'OINDICES';
+BTREE: 'BTREE';
+BLOOM: 'BLOOM';
+BITMAP: 'BITMAP';
 
 STRING
     : '\'' ( ~('\''|'\\') | ('\\' .) )* '\''
