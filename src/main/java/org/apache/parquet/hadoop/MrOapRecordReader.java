@@ -24,9 +24,13 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
+import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetFooter;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 
 import static org.apache.parquet.hadoop.ParquetInputFormat.getFilter;
+
+import com.google.common.collect.Lists;
 
 public class MrOapRecordReader<T> implements RecordReader<T> {
 
@@ -64,9 +68,10 @@ public class MrOapRecordReader<T> implements RecordReader<T> {
     public void initialize() throws IOException, InterruptedException {
       ParquetFileReader parquetFileReader = null;
       try {
+        ParquetMetadata parquetMetadata = footer.toParquetMetadata();
         parquetFileReader =
-                ParquetFileReader.open(configuration, file, footer.toParquetMetadata());
-        parquetFileReader.filterRowGroups(getFilter(configuration));
+          new ParquetFileReader(configuration, parquetMetadata.getFileMetaData(), file,
+                  parquetMetadata.getBlocks(), Lists.newArrayList());
         this.internalReader = new InternalParquetRecordReader<>(readSupport);
         this.internalReader.initialize(parquetFileReader, configuration);
       } catch (IOException e) {

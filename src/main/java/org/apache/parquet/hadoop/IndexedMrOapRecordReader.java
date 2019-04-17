@@ -27,6 +27,8 @@ import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
 import org.apache.parquet.hadoop.metadata.ParquetFooter;
 
+import com.google.common.collect.Lists;
+
 public class IndexedMrOapRecordReader<T> implements RecordReader<T> {
 
     private Configuration configuration;
@@ -64,9 +66,9 @@ public class IndexedMrOapRecordReader<T> implements RecordReader<T> {
 
     @Override
     public void initialize() throws IOException, InterruptedException {
-
+      // TODO now columns is empty list.
       OapParquetFileReader reader = OapParquetFileReader.open(configuration, file,
-        footer.toParquetMetadata(globalRowIds));
+        footer.toParquetMetadata(globalRowIds), Lists.newArrayList());
       this.internalReader = new InternalOapRecordReader<>(readSupport);
       this.internalReader.initialize(reader, configuration);
 

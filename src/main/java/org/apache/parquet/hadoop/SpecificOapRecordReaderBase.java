@@ -69,7 +69,7 @@ public abstract class SpecificOapRecordReaderBase<T> implements RecordReader<T> 
       this.sparkSchema = StructType$.MODULE$.fromString(sparkRequestedSchemaString);
       this.reader =
         OapParquetFileReader.open(configuration, file, footer, requestedSchema.getColumns());
-      //      this.reader.setRequestedSchema(requestedSchema);
+      // this.reader.setRequestedSchema(requestedSchema);
       for (BlockMetaData block : this.reader.getRowGroups()) {
         this.totalRowCount += block.getRowCount();
       }
