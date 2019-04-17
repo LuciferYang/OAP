@@ -82,7 +82,6 @@ private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
     }
 
     val requiredIds = requiredSchema.map(dataSchema.fields.indexOf(_)).toArray
-    val pushed = FilterHelper.tryToPushFilters(sparkSession, requiredSchema, filters)
 
     val resultSchema = StructType(partitionSchema.fields ++ requiredSchema.fields)
     // TODO why add `sparkSession.sessionState.conf.wholeStageEnabled` condition
@@ -106,14 +105,38 @@ private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 
+    val sqlConf = sparkSession.sessionState.conf
+    val enableParquetFilterPushDown: Boolean = sqlConf.parquetFilterPushDown
+    // Whole stage codegen (PhysicalRDD) is able to deal with batches directly
+    val pushDownDate = sqlConf.parquetFilterPushDownDate
+    val pushDownTimestamp = sqlConf.parquetFilterPushDownTimestamp
+    val pushDownDecimal = sqlConf.parquetFilterPushDownDecimal
+    val pushDownStringStartWith = sqlConf.parquetFilterPushDownStringStartWith
+    val pushDownInFilterThreshold = sqlConf.parquetFilterPushDownInFilterThreshold
+    val isCaseSensitive = sqlConf.caseSensitiveAnalysis
+
     (file: PartitionedFile) => {
       assert(file.partitionValues.numFields == partitionSchema.size)
       val conf = broadcastedHadoopConf.value.value
+
+      // TODO maybe we should build a context and delay init pushed filters because build
+      //  Option[FilterPredicate] will read footer.
+      val pushed = FilterHelper.tryToPushFilters(
+        filters,
+        conf,
+        file.filePath,
+        enableParquetFilterPushDown,
+        pushDownDate,
+        pushDownTimestamp,
+        pushDownDecimal,
+        pushDownStringStartWith,
+        pushDownInFilterThreshold,
+        isCaseSensitive)
+
       // For parquet, if enableVectorizedReader is true, init ParquetVectorizedContext.
       // Otherwise context is none.
       val context: Option[DataFileContext] = if (enableVectorizedReader) {
-        Some(ParquetVectorizedContext(partitionSchema,
-          file.partitionValues, returningBatch))
+        Some(ParquetVectorizedContext(partitionSchema, file.partitionValues, returningBatch))
       } else {
         None
       }

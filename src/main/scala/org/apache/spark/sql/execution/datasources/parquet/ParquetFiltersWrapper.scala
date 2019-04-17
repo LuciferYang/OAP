@@ -26,7 +26,13 @@ import org.apache.spark.sql.types.StructType
  *  Wrap ParquetFilters so it can be accessed outside of the parquet package.
  */
 object ParquetFiltersWrapper {
-  def createFilter(schema: StructType, predicate: sources.Filter): Option[FilterPredicate] = {
-    ParquetFilters.createFilter(schema, predicate)
-  }
+  def createFilter(
+      pushDownDate: Boolean,
+      pushDownTimestamp: Boolean,
+      pushDownDecimal: Boolean,
+      pushDownStartWith: Boolean,
+      pushDownInFilterThreshold: Int,
+      caseSensitive: Boolean): ParquetFilters =
+    new ParquetFilters(pushDownDate, pushDownTimestamp, pushDownDecimal,
+      pushDownStartWith, pushDownInFilterThreshold, caseSensitive)
 }

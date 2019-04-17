@@ -18,8 +18,10 @@
 package org.apache.spark.sql.execution.datasources.oap.utils
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.apache.parquet.filter2.predicate.{FilterApi, FilterPredicate}
-import org.apache.parquet.hadoop.ParquetInputFormat
+import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
+import org.apache.parquet.hadoop.{ParquetFileReader, ParquetInputFormat}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFiltersWrapper
@@ -29,26 +31,30 @@ import org.apache.spark.sql.types.StructType
 object FilterHelper {
 
   def tryToPushFilters(
-      sparkSession: SparkSession,
-      requiredSchema: StructType,
-      filters: Seq[Filter]): Option[FilterPredicate] = {
-    tryToPushFilters(sparkSession.sessionState.conf.parquetFilterPushDown, requiredSchema, filters)
-  }
-
-  def tryToPushFilters(
-      filterPushDown: Boolean,
-      requiredSchema: StructType,
-      filters: Seq[Filter]): Option[FilterPredicate] = {
-    if (filterPushDown) {
-      filters
-        // Collects all converted Parquet filter predicates. Notice that not all predicates can be
-        // converted (`ParquetFilters.createFilter` returns an `Option`). That's why a `flatMap`
-        // is used here.
-        .flatMap(ParquetFiltersWrapper.createFilter(requiredSchema, _))
-        .reduceOption(FilterApi.and)
-    } else {
-      None
-    }
+      filters: Seq[Filter],
+      conf: Configuration,
+      path: String,
+      enableParquetFilterPushDown: Boolean,
+      pushDownDate: Boolean,
+      pushDownTimestamp: Boolean,
+      pushDownDecimal: Boolean,
+      pushDownStartWith: Boolean,
+      pushDownInFilterThreshold: Int,
+      caseSensitive: Boolean): Option[FilterPredicate] = if (enableParquetFilterPushDown) {
+    val filePath = new Path(path)
+    val footerFileMetaData =
+      ParquetFileReader.readFooter(conf, filePath, SKIP_ROW_GROUPS).getFileMetaData
+    val parquetSchema = footerFileMetaData.getSchema
+    val parquetFilters = ParquetFiltersWrapper.createFilter(pushDownDate, pushDownTimestamp,
+      pushDownDecimal, pushDownStartWith, pushDownInFilterThreshold, caseSensitive)
+    filters
+      // Collects all converted Parquet filter predicates. Notice that not all predicates can be
+      // converted (`ParquetFilters.createFilter` returns an `Option`). That's why a `flatMap`
+      // is used here.
+      .flatMap(parquetFilters.createFilter(parquetSchema, _))
+      .reduceOption(FilterApi.and)
+  } else {
+    None
   }
 
   def setFilterIfExist(configuration: Configuration, pushed: Option[FilterPredicate]): Unit = {
