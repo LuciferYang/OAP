@@ -16,14 +16,16 @@
  */
 package org.apache.parquet.hadoop;
 
+import static org.apache.parquet.format.converter.ParquetMetadataConverter.NO_FILTER;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.page.PageReadStore;
-import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.format.converter.ParquetMetadataConverter;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.IndexedBlockMetaData;
@@ -31,8 +33,6 @@ import org.apache.parquet.hadoop.metadata.ParquetFooter;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 import org.apache.parquet.schema.MessageType;
-
-import static org.apache.parquet.format.converter.ParquetMetadataConverter.NO_FILTER;
 
 public class OapParquetFileReader implements Closeable {
 
@@ -43,9 +43,15 @@ public class OapParquetFileReader implements Closeable {
     this.reader = reader;
   }
 
-  public static OapParquetFileReader open(Configuration conf, Path file, ParquetMetadata footer)
+  public static OapParquetFileReader open(
+      Configuration conf,
+      Path file,
+      ParquetMetadata footer,
+      List<ColumnDescriptor> columns)
           throws IOException {
-    return new OapParquetFileReader(new ParquetFileReader(conf, file, footer));
+    ParquetFileReader parquetFileReader =
+      new ParquetFileReader(conf, footer.getFileMetaData(), file, footer.getBlocks(), columns);
+    return new OapParquetFileReader(parquetFileReader);
   }
 
   public RowGroupDataAndRowIds readNextRowGroupAndRowIds() throws IOException {
@@ -60,10 +66,6 @@ public class OapParquetFileReader implements Closeable {
     PageReadStore pageReadStore = this.reader.readNextRowGroup();
     currentBlock ++;
     return pageReadStore;
-  }
-
-  public void filterRowGroups(FilterCompat.Filter filter) throws IOException {
-    this.reader.filterRowGroups(filter);
   }
 
   public void setRequestedSchema(MessageType projection) {
