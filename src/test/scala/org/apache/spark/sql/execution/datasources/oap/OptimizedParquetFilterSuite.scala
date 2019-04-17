@@ -115,6 +115,37 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
     }
   }
 
+  test("OAP#1031- query failed when Some index file not exists") {
+    val data: Seq[(Int, String, Int)] = (1 to 300).map { i => (i, s"this is test $i", i % 2) }
+    data.toDF("key", "value1", "value2").createOrReplaceTempView("t")
+    sql(
+      """
+        |INSERT OVERWRITE TABLE partitioned_parquet
+        |partition (c=0)
+        |SELECT key, value1 from t where value2 = 0
+      """.stripMargin)
+
+    sql(
+      """
+        |INSERT OVERWRITE TABLE partitioned_parquet
+        |partition (c=1)
+        |SELECT key, value1 from t where value2 = 1
+      """.stripMargin)
+
+    withIndex(TestIndex("partitioned_parquet", "index1"),
+      TestIndex("partitioned_parquet", "index2")) {
+      withSQLConf(OapConf.OAP_INDEXER_CHOICE_MAX_SIZE.key -> "2") {
+        // create index
+        sql("create oindex index1 on partitioned_parquet (b)")
+        sql("create oindex index2 on partitioned_parquet (a) partition(c = 0)")
+
+        // push down indexScanners a and b , but b not exists.
+        val df = sql("SELECT b FROM partitioned_parquet WHERE b = 'this is test 1' and a = 1")
+        checkAnswer(df, Row("this is test 1") :: Nil)
+      }
+    }
+  }
+
   test("OAP#1038 Index can be used when timestamps is constant on partitioned table") {
     val data: Seq[(Int, String, Int)] = (1 to 300).map { i => (i, s"this is test $i", i % 2) }
     data.toDF("key", "value1", "value2").createOrReplaceTempView("t")
