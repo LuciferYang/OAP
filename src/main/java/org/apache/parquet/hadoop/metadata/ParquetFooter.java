@@ -16,18 +16,16 @@
  */
 package org.apache.parquet.hadoop.metadata;
 
-import static org.apache.parquet.filter2.compat.RowGroupFilter.filterRowGroups;
-import static org.apache.parquet.hadoop.ParquetInputFormat.getFilter;
 
 import java.util.List;
 
 import com.google.common.collect.Lists;
-
-import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.parquet.it.unimi.dsi.fastutil.ints.IntList;
 import org.apache.parquet.schema.MessageType;
+
+import static org.apache.parquet.filter2.compat.RowGroupFilter.filterRowGroups;
 
 public class ParquetFooter {
 

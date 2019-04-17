@@ -30,10 +30,10 @@ import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.page.PageReader;
 import org.apache.parquet.column.values.ValuesReader;
 import org.apache.parquet.schema.OriginalType;
+import org.apache.parquet.schema.PrimitiveType;
 
 import static org.apache.parquet.column.ValuesType.REPETITION_LEVEL;
 
-import org.apache.parquet.schema.PrimitiveType;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;

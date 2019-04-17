@@ -20,17 +20,14 @@ package org.apache.parquet.hadoop;
 
 import java.io.IOException;
 
+import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.hadoop.api.ReadSupport;
 import org.apache.parquet.hadoop.api.RecordReader;
-import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetFooter;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 
-import static org.apache.parquet.hadoop.ParquetInputFormat.getFilter;
-
-import com.google.common.collect.Lists;
 
 public class MrOapRecordReader<T> implements RecordReader<T> {
 
