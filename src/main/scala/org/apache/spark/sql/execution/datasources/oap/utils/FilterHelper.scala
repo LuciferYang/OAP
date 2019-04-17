@@ -23,10 +23,8 @@ import org.apache.parquet.filter2.predicate.{FilterApi, FilterPredicate}
 import org.apache.parquet.format.converter.ParquetMetadataConverter.SKIP_ROW_GROUPS
 import org.apache.parquet.hadoop.{ParquetFileReader, ParquetInputFormat}
 
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFiltersWrapper
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 object FilterHelper {
 
@@ -34,13 +32,13 @@ object FilterHelper {
       filters: Seq[Filter],
       conf: Configuration,
       path: String,
-      enableParquetFilterPushDown: Boolean,
-      pushDownDate: Boolean,
-      pushDownTimestamp: Boolean,
-      pushDownDecimal: Boolean,
-      pushDownStartWith: Boolean,
-      pushDownInFilterThreshold: Int,
-      caseSensitive: Boolean): Option[FilterPredicate] = if (enableParquetFilterPushDown) {
+      enableParquetFilterPushDown: Boolean = true,
+      pushDownDate: Boolean = true,
+      pushDownTimestamp: Boolean = true,
+      pushDownDecimal: Boolean = true,
+      pushDownStartWith: Boolean = true,
+      pushDownInFilterThreshold: Int = 10,
+      caseSensitive: Boolean = true): Option[FilterPredicate] = if (enableParquetFilterPushDown) {
     val filePath = new Path(path)
     val footerFileMetaData =
       ParquetFileReader.readFooter(conf, filePath, SKIP_ROW_GROUPS).getFileMetaData

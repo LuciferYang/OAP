@@ -20,6 +20,7 @@ package org.apache.spark.sql.execution.datasources.parquet
 import java.io.File
 import java.util.{Random, TimeZone}
 
+import com.google.common.collect.Lists
 import org.apache.hadoop.fs.Path
 import org.apache.parquet.column.ParquetProperties.WriterVersion.PARQUET_1_0
 import org.apache.parquet.example.data.Group
@@ -894,7 +895,8 @@ class SkippableVectorizedColumnReaderSuite extends SparkFunSuite with SharedOapC
       .readParquetFooter(configuration, new Path(fileName)).toParquetMetadata
     var reader: OapParquetFileReader = null
     try {
-      reader = OapParquetFileReader.open(configuration, new Path(fileName), footer)
+      reader = OapParquetFileReader.open(configuration, new Path(fileName), footer,
+        parquetSchema.getColumns)
       reader.setRequestedSchema(parquetSchema)
       val rowGroup = reader.readNextRowGroup()
       val descriptor = parquetSchema.getColumns.get(0)
@@ -922,7 +924,8 @@ class SkippableVectorizedColumnReaderSuite extends SparkFunSuite with SharedOapC
       .readParquetFooter(configuration, new Path(fileName)).toParquetMetadata
     var reader: OapParquetFileReader = null
     try {
-      reader = OapParquetFileReader.open(configuration, new Path(fileName), footer)
+      reader = OapParquetFileReader.open(configuration, new Path(fileName), footer,
+        parquetSchema.getColumns)
       reader.setRequestedSchema(parquetSchema)
       val rowGroup = reader.readNextRowGroup()
       val descriptor = parquetSchema.getColumns.get(0)
