@@ -20,6 +20,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
+import org.apache.spark.sql.execution.datasources.parquet.ParquetDictionaryWrapper;
 import org.apache.spark.sql.types.*;
 import org.apache.spark.unsafe.Platform;
 import org.apache.spark.unsafe.types.UTF8String;
@@ -547,7 +548,7 @@ public final class OnHeapColumnVector extends WritableColumnVector {
   public int dictionaryLength() {
     if(dictionary ==  null) {
       return 0;
-    } else if (dictionary instanceof  ParquetDictionaryWrapper) {
+    } else if (dictionary instanceof ParquetDictionaryWrapper) {
       return ((ParquetDictionaryWrapper)dictionary).getMaxId() + 1;
     } else {
       throw new UnsupportedOperationException("this api only use by oap");
