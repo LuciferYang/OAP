@@ -151,6 +151,10 @@ private[sql] class FiberCacheManager(
       case fiber: DataFiberId => fiber
     }
 
+    val chunkFibers = cacheBackend.getFibers.collect {
+      case chunk: ParquetChunkFiberId => chunk
+    }
+
     // Use a bit set to represent current cache status of one file.
     // Say, there is a file has 3 row groups and 3 columns. Then bit set size is 3 * 3 = 9
     // Say, cache status is below:
@@ -168,7 +172,17 @@ private[sql] class FiberCacheManager(
         FiberCacheStatus(dataFile.path, fiberBitSet, fileMeta.getGroupCount, fileMeta.getFieldCount)
     }.toSeq
 
-    CacheStatusSerDe.serialize(statusRawData)
+    // Not correct
+    val statusRawData2 = chunkFibers.groupBy(_.file).map {
+      case (file, chunkSet) =>
+        val getGroupCount = chunkSet.head.groupCount
+        val fieldCount = chunkSet.head.fieldCount
+        val fiberBitSet = new OapBitSet(getGroupCount * fieldCount)
+        fiberBitSet.setUntil(getGroupCount * fieldCount - 1)
+        FiberCacheStatus(file, fiberBitSet, getGroupCount, fieldCount)
+    }.toSeq
+
+    CacheStatusSerDe.serialize(statusRawData ++ statusRawData2)
   }
 
   def cacheStats: CacheStats = cacheBackend.cacheStats

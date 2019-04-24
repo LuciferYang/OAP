@@ -51,25 +51,21 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-
-import org.apache.parquet.column.Encoding;
-import org.apache.parquet.column.page.DictionaryPageReadStore;
-import org.apache.parquet.filter2.compat.FilterCompat;
-import org.apache.parquet.filter2.compat.RowGroupFilter;
-
 import org.apache.parquet.bytes.BytesInput;
 import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.column.Encoding;
 import org.apache.parquet.column.page.DataPage;
 import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.page.DictionaryPage;
+import org.apache.parquet.column.page.DictionaryPageReadStore;
 import org.apache.parquet.column.page.PageReadStore;
-import org.apache.parquet.hadoop.metadata.ColumnPath;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.compat.RowGroupFilter;
 import org.apache.parquet.format.DataPageHeader;
 import org.apache.parquet.format.DataPageHeaderV2;
 import org.apache.parquet.format.DictionaryPageHeader;
@@ -81,23 +77,22 @@ import org.apache.parquet.hadoop.CodecFactory.BytesDecompressor;
 import org.apache.parquet.hadoop.ColumnChunkPageReadStore.ColumnChunkPageReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
+import org.apache.parquet.hadoop.metadata.ColumnPath;
 import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
-import org.apache.parquet.hadoop.util.HiddenFileFilter;
 import org.apache.parquet.hadoop.util.HadoopStreams;
-import org.apache.parquet.io.SeekableInputStream;
+import org.apache.parquet.hadoop.util.HiddenFileFilter;
 import org.apache.parquet.hadoop.util.counters.BenchmarkCounter;
-import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.io.InputFile;
+import org.apache.parquet.io.ParquetDecodingException;
+import org.apache.parquet.io.SeekableInputStream;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheManager;
 import org.apache.spark.sql.execution.datasources.oap.filecache.ParquetChunkFiberId;
-import org.apache.spark.sql.internal.oap.OapConf;
 import org.apache.spark.sql.internal.oap.OapConf$;
-import org.apache.spark.sql.oap.OapRuntime;
 import org.apache.spark.sql.oap.OapRuntime$;
 import org.apache.spark.unsafe.Platform;
 import org.slf4j.Logger;
@@ -115,6 +110,10 @@ public class ParquetFileReader implements Closeable {
       OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
 
   private boolean useBinaryCache = false;
+
+  private int groupCount = 0;
+
+  private int fieldCount = 0;
 
   private static final Logger LOG = LoggerFactory.getLogger(ParquetFileReader.class);
 
@@ -612,6 +611,8 @@ public class ParquetFileReader implements Closeable {
     this.codecFactory = new CodecFactory(conf);
     this.useBinaryCache =
       conf.getBoolean(OapConf$.MODULE$.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE().key(),false);
+    this.groupCount = blocks.size();
+    this.fieldCount = this.fileMetaData.getSchema().getColumns().size();
   }
 
   public ParquetMetadata getFooter() {
@@ -1078,11 +1079,13 @@ public class ParquetFileReader implements Closeable {
       byte[] chunksBytes = new byte[length];
       if (useBinaryCache) {
         ParquetChunkFiberId fiberId =
-          new ParquetChunkFiberId(getPath().toUri().toString(), offset, length);
+          new ParquetChunkFiberId(
+            getPath().toUri().toString(), groupCount, fieldCount, offset, length);
         fiberId.input(f);
         FiberCache fiberCache = fiberCacheManager.get(fiberId);
         Platform.copyMemory(null, fiberCache.getBaseOffset(), chunksBytes,
           Platform.BYTE_ARRAY_OFFSET, length);
+        fiberId.input(null);
       } else {
         f.seek(offset);
         f.readFully(chunksBytes);

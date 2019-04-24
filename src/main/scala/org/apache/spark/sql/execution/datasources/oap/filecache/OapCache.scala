@@ -52,7 +52,7 @@ trait OapCache {
   }
 
   def incFiberCountAndSize(fiber: FiberId, count: Long, size: Long): Unit = {
-    if (fiber.isInstanceOf[DataFiberId]) {
+    if (fiber.isInstanceOf[DataFiberId] || fiber.isInstanceOf[ParquetChunkFiberId]) {
       dataFiberCount.addAndGet(count)
       dataFiberSize.addAndGet(size)
     } else if (fiber.isInstanceOf[BTreeFiberId] || fiber.isInstanceOf[BitmapFiberId]) {

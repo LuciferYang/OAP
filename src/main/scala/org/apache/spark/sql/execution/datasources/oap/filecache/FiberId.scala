@@ -28,6 +28,8 @@ private[oap] abstract class FiberId {}
 
 case class ParquetChunkFiberId(
     file: String,
+    groupCount: Int,
+    fieldCount: Int,
     offset: Long,
     size: Int) extends FiberId {
 
