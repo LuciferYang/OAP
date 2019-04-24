@@ -106,9 +106,6 @@ import org.slf4j.LoggerFactory;
  */
 public class ParquetFileReader implements Closeable {
 
-  private FiberCacheManager fiberCacheManager =
-      OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
-
   private boolean useBinaryCache = false;
 
   private int groupCount = 0;
@@ -1078,6 +1075,8 @@ public class ParquetFileReader implements Closeable {
       List<Chunk> result = new ArrayList<Chunk>(chunks.size());
       byte[] chunksBytes = new byte[length];
       if (useBinaryCache) {
+        FiberCacheManager fiberCacheManager =
+                OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
         ParquetChunkFiberId fiberId =
           new ParquetChunkFiberId(
             getPath().toUri().toString(), groupCount, fieldCount, offset, length);
