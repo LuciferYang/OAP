@@ -103,6 +103,9 @@ private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
     hadoopConf.setBoolean(
       SQLConf.PARQUET_INT96_AS_TIMESTAMP.key,
       sparkSession.sessionState.conf.isParquetINT96AsTimestamp)
+    hadoopConf.setBoolean(
+      OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE.key,
+      sparkSession.sessionState.conf.getConf(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE))
     val broadcastedHadoopConf =
       sparkSession.sparkContext.broadcast(new SerializableConfiguration(hadoopConf))
 

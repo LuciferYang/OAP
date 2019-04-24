@@ -17,9 +17,49 @@
 
 package org.apache.spark.sql.execution.datasources.oap.filecache
 
+import org.apache.parquet.hadoop.util.counters.BenchmarkCounter
+import org.apache.parquet.io.SeekableInputStream
+
 import org.apache.spark.sql.execution.datasources.oap.io.DataFile
+import org.apache.spark.sql.oap.OapRuntime
+import org.apache.spark.unsafe.Platform
 
 private[oap] abstract class FiberId {}
+
+case class ParquetChunkFiberId(
+    file: String,
+    offset: Long,
+    size: Int) extends FiberId {
+
+  private var _input: SeekableInputStream = _
+
+  def input(in: SeekableInputStream): Unit = _input = in
+
+  def input: SeekableInputStream = _input
+
+  override def hashCode(): Int = (file + offset + size).hashCode
+
+  override def equals(obj: Any): Boolean = obj match {
+    case another: ParquetChunkFiberId =>
+      another.file == file && another.offset == offset && another.size == size
+    case _ => false
+  }
+
+  override def toString: String = {
+    s"type: ParquetChunkFiber file: $file, offset: $offset, size: $size"
+  }
+
+  def doCache(): FiberCache = {
+    val data = new Array[Byte](size)
+    _input.seek(offset)
+    _input.readFully(data)
+    val fiber = OapRuntime.getOrCreate.memoryManager.getEmptyDataFiberCache(size)
+    Platform.copyMemory(data,
+      Platform.BYTE_ARRAY_OFFSET, null, fiber.getBaseOffset, size)
+    BenchmarkCounter.incrementBytesRead(size)
+    fiber
+  }
+}
 
 private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
     FiberId {
