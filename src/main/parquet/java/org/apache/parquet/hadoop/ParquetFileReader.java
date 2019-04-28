@@ -1,4 +1,4 @@
-/* 
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -51,25 +51,21 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-
-import org.apache.parquet.column.Encoding;
-import org.apache.parquet.column.page.DictionaryPageReadStore;
-import org.apache.parquet.filter2.compat.FilterCompat;
-import org.apache.parquet.filter2.compat.RowGroupFilter;
-
 import org.apache.parquet.bytes.BytesInput;
 import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.column.Encoding;
 import org.apache.parquet.column.page.DataPage;
 import org.apache.parquet.column.page.DataPageV1;
 import org.apache.parquet.column.page.DataPageV2;
 import org.apache.parquet.column.page.DictionaryPage;
+import org.apache.parquet.column.page.DictionaryPageReadStore;
 import org.apache.parquet.column.page.PageReadStore;
-import org.apache.parquet.hadoop.metadata.ColumnPath;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.compat.RowGroupFilter;
 import org.apache.parquet.format.DataPageHeader;
 import org.apache.parquet.format.DataPageHeaderV2;
 import org.apache.parquet.format.DictionaryPageHeader;
@@ -81,17 +77,24 @@ import org.apache.parquet.hadoop.CodecFactory.BytesDecompressor;
 import org.apache.parquet.hadoop.ColumnChunkPageReadStore.ColumnChunkPageReader;
 import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
+import org.apache.parquet.hadoop.metadata.ColumnPath;
 import org.apache.parquet.hadoop.metadata.FileMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
-import org.apache.parquet.hadoop.util.HiddenFileFilter;
 import org.apache.parquet.hadoop.util.HadoopStreams;
-import org.apache.parquet.io.SeekableInputStream;
+import org.apache.parquet.hadoop.util.HiddenFileFilter;
 import org.apache.parquet.hadoop.util.counters.BenchmarkCounter;
-import org.apache.parquet.io.ParquetDecodingException;
 import org.apache.parquet.io.InputFile;
+import org.apache.parquet.io.ParquetDecodingException;
+import org.apache.parquet.io.SeekableInputStream;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache;
+import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheManager;
+import org.apache.spark.sql.execution.datasources.oap.filecache.ParquetChunkFiberId;
+import org.apache.spark.sql.internal.oap.OapConf$;
+import org.apache.spark.sql.oap.OapRuntime$;
+import org.apache.spark.unsafe.Platform;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -102,6 +105,12 @@ import org.slf4j.LoggerFactory;
  *
  */
 public class ParquetFileReader implements Closeable {
+
+  private boolean useBinaryCache = false;
+
+  private int groupCount = 0;
+
+  private int fieldCount = 0;
 
   private static final Logger LOG = LoggerFactory.getLogger(ParquetFileReader.class);
 
@@ -136,9 +145,9 @@ public class ParquetFileReader implements Closeable {
    * @throws IOException
    */
   public static List<Footer> readAllFootersInParallelUsingSummaryFiles(
-      final Configuration configuration,
-      final Collection<FileStatus> partFiles,
-      final boolean skipRowGroups) throws IOException {
+          final Configuration configuration,
+          final Collection<FileStatus> partFiles,
+          final boolean skipRowGroups) throws IOException {
 
     // figure out list of all parents to part files
     Set<Path> parents = new HashSet<Path>();
@@ -429,14 +438,14 @@ public class ParquetFileReader implements Closeable {
    * @throws IOException if an error occurs while reading the file
    */
   public static final ParquetMetadata readFooter(
-      InputFile file, MetadataFilter filter) throws IOException {
+          InputFile file, MetadataFilter filter) throws IOException {
     ParquetMetadataConverter converter;
     // TODO: remove this temporary work-around.
     // this is necessary to pass the Configuration to ParquetMetadataConverter
     // and should be removed when there is a non-Hadoop configuration.
     if (file instanceof HadoopInputFile) {
       converter = new ParquetMetadataConverter(
-          ((HadoopInputFile) file).getConfiguration());
+              ((HadoopInputFile) file).getConfiguration());
     } else {
       converter = new ParquetMetadataConverter();
     }
@@ -529,8 +538,8 @@ public class ParquetFileReader implements Closeable {
    */
   @Deprecated
   public ParquetFileReader(
-      Configuration configuration, FileMetaData fileMetaData,
-      Path filePath, List<BlockMetaData> blocks, List<ColumnDescriptor> columns) throws IOException {
+          Configuration configuration, FileMetaData fileMetaData,
+          Path filePath, List<BlockMetaData> blocks, List<ColumnDescriptor> columns) throws IOException {
     this.converter = new ParquetMetadataConverter(configuration);
     this.conf = configuration;
     this.fileMetaData = fileMetaData;
@@ -597,6 +606,10 @@ public class ParquetFileReader implements Closeable {
     // the page size parameter isn't meaningful when only using
     // the codec factory to get decompressors
     this.codecFactory = new CodecFactory(conf);
+    this.useBinaryCache =
+            conf.getBoolean(OapConf$.MODULE$.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE().key(),false);
+    this.groupCount = blocks.size();
+    this.fieldCount = this.fileMetaData.getSchema().getColumns().size();
   }
 
   public ParquetMetadata getFooter() {
@@ -635,12 +648,12 @@ public class ParquetFileReader implements Closeable {
     List<RowGroupFilter.FilterLevel> levels = new ArrayList<RowGroupFilter.FilterLevel>();
 
     if (conf.getBoolean(
-        STATS_FILTERING_ENABLED, STATS_FILTERING_ENABLED_DEFAULT)) {
+            STATS_FILTERING_ENABLED, STATS_FILTERING_ENABLED_DEFAULT)) {
       levels.add(STATISTICS);
     }
 
     if (conf.getBoolean(
-        DICTIONARY_FILTERING_ENABLED, DICTIONARY_FILTERING_ENABLED_DEFAULT)) {
+            DICTIONARY_FILTERING_ENABLED, DICTIONARY_FILTERING_ENABLED_DEFAULT)) {
       levels.add(DICTIONARY);
     }
 
@@ -756,7 +769,7 @@ public class ParquetFileReader implements Closeable {
    */
   DictionaryPage readDictionary(ColumnChunkMetaData meta) throws IOException {
     if (!meta.getEncodings().contains(Encoding.PLAIN_DICTIONARY) &&
-        !meta.getEncodings().contains(Encoding.RLE_DICTIONARY)) {
+                !meta.getEncodings().contains(Encoding.RLE_DICTIONARY)) {
       return null;
     }
 
@@ -774,13 +787,13 @@ public class ParquetFileReader implements Closeable {
     BytesDecompressor decompressor = codecFactory.getDecompressor(meta.getCodec());
 
     return new DictionaryPage(
-        decompressor.decompress(compressedPage.getBytes(), compressedPage.getUncompressedSize()),
-        compressedPage.getDictionarySize(),
-        compressedPage.getEncoding());
+            decompressor.decompress(compressedPage.getBytes(), compressedPage.getUncompressedSize()),
+            compressedPage.getDictionarySize(),
+            compressedPage.getEncoding());
   }
 
   private DictionaryPage readCompressedDictionary(
-      PageHeader pageHeader, SeekableInputStream fin) throws IOException {
+          PageHeader pageHeader, SeekableInputStream fin) throws IOException {
     DictionaryPageHeader dictHeader = pageHeader.getDictionary_page_header();
 
     int uncompressedPageSize = pageHeader.getUncompressed_page_size();
@@ -792,8 +805,8 @@ public class ParquetFileReader implements Closeable {
     BytesInput bin = BytesInput.from(dictPageBytes);
 
     return new DictionaryPage(
-        bin, uncompressedPageSize, dictHeader.getNum_values(),
-        converter.getEncoding(dictHeader.getEncoding()));
+            bin, uncompressedPageSize, dictHeader.getNum_values(),
+            converter.getEncoding(dictHeader.getEncoding()));
   }
 
   @Override
@@ -843,7 +856,7 @@ public class ParquetFileReader implements Closeable {
       List<DataPage> pagesInChunk = new ArrayList<DataPage>();
       DictionaryPage dictionaryPage = null;
       PrimitiveType type = getFileMetaData().getSchema()
-          .getType(descriptor.col.getPath()).asPrimitiveType();
+                                   .getType(descriptor.col.getPath()).asPrimitiveType();
       long valuesCountReadSoFar = 0;
       while (valuesCountReadSoFar < descriptor.metadata.getValueCount()) {
         PageHeader pageHeader = readPageHeader();
@@ -855,29 +868,29 @@ public class ParquetFileReader implements Closeable {
             if (dictionaryPage != null) {
               throw new ParquetDecodingException("more than one dictionary page in column " + descriptor.col);
             }
-          DictionaryPageHeader dicHeader = pageHeader.getDictionary_page_header();
-          dictionaryPage =
-                new DictionaryPage(
-                    this.readAsBytesInput(compressedPageSize),
-                    uncompressedPageSize,
-                    dicHeader.getNum_values(),
-                    converter.getEncoding(dicHeader.getEncoding())
+            DictionaryPageHeader dicHeader = pageHeader.getDictionary_page_header();
+            dictionaryPage =
+                    new DictionaryPage(
+                            this.readAsBytesInput(compressedPageSize),
+                            uncompressedPageSize,
+                            dicHeader.getNum_values(),
+                            converter.getEncoding(dicHeader.getEncoding())
                     );
             break;
           case DATA_PAGE:
             DataPageHeader dataHeaderV1 = pageHeader.getData_page_header();
             pagesInChunk.add(
-                new DataPageV1(
-                    this.readAsBytesInput(compressedPageSize),
-                    dataHeaderV1.getNum_values(),
-                    uncompressedPageSize,
-                    converter.fromParquetStatistics(
-                        getFileMetaData().getCreatedBy(),
-                        dataHeaderV1.getStatistics(),
-                        type),
-                    converter.getEncoding(dataHeaderV1.getRepetition_level_encoding()),
-                    converter.getEncoding(dataHeaderV1.getDefinition_level_encoding()),
-                    converter.getEncoding(dataHeaderV1.getEncoding())
+                    new DataPageV1(
+                            this.readAsBytesInput(compressedPageSize),
+                            dataHeaderV1.getNum_values(),
+                            uncompressedPageSize,
+                            converter.fromParquetStatistics(
+                                    getFileMetaData().getCreatedBy(),
+                                    dataHeaderV1.getStatistics(),
+                                    type),
+                            converter.getEncoding(dataHeaderV1.getRepetition_level_encoding()),
+                            converter.getEncoding(dataHeaderV1.getDefinition_level_encoding()),
+                            converter.getEncoding(dataHeaderV1.getEncoding())
                     ));
             valuesCountReadSoFar += dataHeaderV1.getNum_values();
             break;
@@ -885,20 +898,20 @@ public class ParquetFileReader implements Closeable {
             DataPageHeaderV2 dataHeaderV2 = pageHeader.getData_page_header_v2();
             int dataSize = compressedPageSize - dataHeaderV2.getRepetition_levels_byte_length() - dataHeaderV2.getDefinition_levels_byte_length();
             pagesInChunk.add(
-                new DataPageV2(
-                    dataHeaderV2.getNum_rows(),
-                    dataHeaderV2.getNum_nulls(),
-                    dataHeaderV2.getNum_values(),
-                    this.readAsBytesInput(dataHeaderV2.getRepetition_levels_byte_length()),
-                    this.readAsBytesInput(dataHeaderV2.getDefinition_levels_byte_length()),
-                    converter.getEncoding(dataHeaderV2.getEncoding()),
-                    this.readAsBytesInput(dataSize),
-                    uncompressedPageSize,
-                    converter.fromParquetStatistics(
-                        getFileMetaData().getCreatedBy(),
-                        dataHeaderV2.getStatistics(),
-                        type),
-                    dataHeaderV2.isIs_compressed()
+                    new DataPageV2(
+                            dataHeaderV2.getNum_rows(),
+                            dataHeaderV2.getNum_nulls(),
+                            dataHeaderV2.getNum_values(),
+                            this.readAsBytesInput(dataHeaderV2.getRepetition_levels_byte_length()),
+                            this.readAsBytesInput(dataHeaderV2.getDefinition_levels_byte_length()),
+                            converter.getEncoding(dataHeaderV2.getEncoding()),
+                            this.readAsBytesInput(dataSize),
+                            uncompressedPageSize,
+                            converter.fromParquetStatistics(
+                                    getFileMetaData().getCreatedBy(),
+                                    dataHeaderV2.getStatistics(),
+                                    type),
+                            dataHeaderV2.isIs_compressed()
                     ));
             valuesCountReadSoFar += dataHeaderV2.getNum_values();
             break;
@@ -911,10 +924,10 @@ public class ParquetFileReader implements Closeable {
       if (valuesCountReadSoFar != descriptor.metadata.getValueCount()) {
         // Would be nice to have a CorruptParquetFileException or something as a subclass?
         throw new IOException(
-            "Expected " + descriptor.metadata.getValueCount() + " values in column chunk at " +
-            getPath() + " offset " + descriptor.metadata.getFirstDataPageOffset() +
-            " but got " + valuesCountReadSoFar + " values instead over " + pagesInChunk.size()
-            + " pages ending at file offset " + (descriptor.fileOffset + pos()));
+                "Expected " + descriptor.metadata.getValueCount() + " values in column chunk at " +
+                        getPath() + " offset " + descriptor.metadata.getFirstDataPageOffset() +
+                        " but got " + valuesCountReadSoFar + " values instead over " + pagesInChunk.size()
+                        + " pages ending at file offset " + (descriptor.fileOffset + pos()));
       }
       BytesDecompressor decompressor = codecFactory.getDecompressor(descriptor.metadata.getCodec());
       return new ColumnChunkPageReader(decompressor, pagesInChunk, dictionaryPage);
@@ -1013,10 +1026,10 @@ public class ParquetFileReader implements Closeable {
      * @param size size of the chunk
      */
     private ChunkDescriptor(
-        ColumnDescriptor col,
-        ColumnChunkMetaData metadata,
-        long fileOffset,
-        int size) {
+            ColumnDescriptor col,
+            ColumnChunkMetaData metadata,
+            long fileOffset,
+            int size) {
       super();
       this.col = col;
       this.metadata = metadata;
@@ -1060,11 +1073,25 @@ public class ParquetFileReader implements Closeable {
      */
     public List<Chunk> readAll(SeekableInputStream f) throws IOException {
       List<Chunk> result = new ArrayList<Chunk>(chunks.size());
-      f.seek(offset);
       byte[] chunksBytes = new byte[length];
-      f.readFully(chunksBytes);
-      // report in a counter the data we just scanned
-      BenchmarkCounter.incrementBytesRead(length);
+      if (useBinaryCache) {
+        FiberCacheManager fiberCacheManager =
+                OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
+        ParquetChunkFiberId fiberId =
+                new ParquetChunkFiberId(
+                        getPath().toUri().toString(), groupCount, fieldCount, offset, length);
+        fiberId.input(f);
+        FiberCache fiberCache = fiberCacheManager.get(fiberId);
+        Platform.copyMemory(null, fiberCache.getBaseOffset(), chunksBytes,
+                Platform.BYTE_ARRAY_OFFSET, length);
+        fiberId.input(null);
+      } else {
+        f.seek(offset);
+        f.readFully(chunksBytes);
+        // report in a counter the data we just scanned
+        BenchmarkCounter.incrementBytesRead(length);
+      }
+
       int currentChunkOffset = 0;
       for (int i = 0; i < chunks.size(); i++) {
         ChunkDescriptor descriptor = chunks.get(i);
