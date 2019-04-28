@@ -30,9 +30,9 @@ import org.apache.parquet.schema.{MessageType, Type}
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.execution.datasources.RecordReader
 import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberId
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupportWrapper
-import org.apache.spark.sql.execution.datasources.RecordReader
 import org.apache.spark.sql.execution.vectorized._
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.types.StructType

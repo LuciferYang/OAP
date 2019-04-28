@@ -23,19 +23,16 @@ import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.RecordReader
 import org.apache.orc._
 import org.apache.orc.mapred.OrcStruct
-import org.apache.orc.mapreduce._
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.datasources.OapException
 import org.apache.spark.sql.execution.datasources.oap.filecache._
-import org.apache.spark.sql.execution.datasources.oap.orc.{IndexedOrcColumnarBatchReader, IndexedOrcMapreduceRecordReader, OrcColumnarBatchReader, OrcMapreduceRecordReader}
+import org.apache.spark.sql.execution.datasources.oap.orc._
 import org.apache.spark.sql.oap.OapRuntime
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types._
-import org.apache.spark.util.CompletionIterator
 
 /**
  * OrcDataFile is using below four record readers to read orc data file.
@@ -64,7 +61,6 @@ private[oap] case class OrcDataFile(
   private var context: OrcDataFileContext = _
   private val filePath: Path = new Path(path)
   private val fileReader: Reader = {
-    import scala.collection.JavaConverters._
     val meta =
       OapRuntime.getOrCreate.dataFileMetaCacheManager.get(this).asInstanceOf[OrcDataFileMeta]
     meta.getOrcFileReader()
@@ -121,49 +117,13 @@ private[oap] case class OrcDataFile(
   private def initRecordReader(
       reader: OrcMapreduceRecordReader[OrcStruct]) = {
     val iterator =
-      new FileRecordReaderIterator[OrcStruct](reader.asInstanceOf[RecordReader[_, OrcStruct]])
+      new FileRecordReaderIterator[OrcStruct](reader)
     new OapCompletionIterator[OrcStruct](iterator, {}) {
       override def close(): Unit = iterator.close()
     }
   }
 
-  private class FileRecordReaderIterator[V](private[this] var rowReader: RecordReader[_, V])
-    extends Iterator[V] with Closeable {
-    private[this] var havePair = false
-    private[this] var finished = false
-
-    override def hasNext: Boolean = {
-      if (!finished && !havePair) {
-        finished = !rowReader.nextKeyValue
-        if (finished) {
-          close()
-        }
-        havePair = !finished
-      }
-      !finished
-    }
-
-    override def next(): V = {
-      if (!hasNext) {
-        throw new java.util.NoSuchElementException("End of stream")
-      }
-      havePair = false
-      rowReader.getCurrentValue
-    }
-
-    override def close(): Unit = {
-      if (rowReader != null) {
-        try {
-          rowReader.close()
-        } finally {
-          rowReader = null
-        }
-      }
-    }
-  }
-
-  override def totalRows(): Long =
-    fileReader.getNumberOfRows()
+  override def totalRows(): Long = fileReader.getNumberOfRows
 
   override def getDataFileMeta(): DataFileMeta =
     new OrcDataFileMeta(filePath, configuration)
