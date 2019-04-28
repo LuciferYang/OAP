@@ -42,6 +42,8 @@ import org.apache.spark.unsafe.Platform;
 
 public class ParquetCacheableFileReader extends ParquetFileReader {
 
+  private FiberCacheManager cacheManager = OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
+
   private boolean useBinaryCache;
 
   private int groupCount;
@@ -114,12 +116,11 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
       List<Chunk> result = new ArrayList<>(chunks.size());
       byte[] chunksBytes = new byte[length];
       if (useBinaryCache) {
-        FiberCacheManager fiberCacheManager = OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
         ParquetChunkFiberId fiberId =
                 new ParquetChunkFiberId(getPath().toUri().toString(), groupCount, fieldCount,
                         offset, length);
         fiberId.input(f);
-        FiberCache fiberCache = fiberCacheManager.get(fiberId);
+        FiberCache fiberCache = cacheManager.get(fiberId);
         Platform.copyMemory(null, fiberCache.getBaseOffset(), chunksBytes,
                 Platform.BYTE_ARRAY_OFFSET, length);
         // To avoid object leak
