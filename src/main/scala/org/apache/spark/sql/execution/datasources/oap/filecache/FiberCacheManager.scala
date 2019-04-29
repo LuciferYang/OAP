@@ -174,12 +174,14 @@ private[sql] class FiberCacheManager(
 
     // Not correct
     val statusRawData2 = chunkFibers.groupBy(_.file).map {
-      case (file, chunkSet) =>
-        val getGroupCount = chunkSet.head.groupCount
-        val fieldCount = chunkSet.head.fieldCount
-        val fiberBitSet = new OapBitSet(getGroupCount * fieldCount)
+      case (dataFile, _) =>
+        val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
+        val getGroupCount = fileMeta.getGroupCount
+        val fieldCount = fileMeta.getFieldCount
+        val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)
+        // TODO set correct bitset.
         fiberBitSet.setUntil(getGroupCount * fieldCount - 1)
-        FiberCacheStatus(file, fiberBitSet, getGroupCount, fieldCount)
+        FiberCacheStatus(dataFile.path, fiberBitSet, getGroupCount, fieldCount)
     }.toSeq
 
     CacheStatusSerDe.serialize(statusRawData ++ statusRawData2)

@@ -33,12 +33,15 @@ import org.apache.parquet.hadoop.metadata.ColumnPath;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.counters.BenchmarkCounter;
 import org.apache.parquet.io.SeekableInputStream;
+
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheManager;
 import org.apache.spark.sql.execution.datasources.oap.filecache.ParquetChunkFiberId;
 import org.apache.spark.sql.execution.datasources.oap.io.DataFile;
+import org.apache.spark.sql.execution.datasources.oap.io.ParquetDataFile;
 import org.apache.spark.sql.internal.oap.OapConf$;
 import org.apache.spark.sql.oap.OapRuntime$;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.Platform;
 
 public class ParquetCacheableFileReader extends ParquetFileReader {
@@ -49,53 +52,50 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
 
   private boolean useBinaryCache;
 
-  private int groupCount;
-
-  private int fieldCount;
-
   ParquetCacheableFileReader(Configuration conf, Path file, ParquetMetadata footer)
           throws IOException {
     super(conf, file, footer);
     this.useBinaryCache =
             conf.getBoolean(OapConf$.MODULE$.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE().key(), false);
-    // TODO remove this code
-    this.groupCount =getRowGroups().size();
-    this.fieldCount = this.getFileMetaData().getSchema().getColumns().size();
+
+    if (useBinaryCache) {
+      this.dataFile = new ParquetDataFile(file.toUri().toString(), new StructType(), conf);
+    }
   }
 
   public PageReadStore readNextRowGroup() throws IOException {
+
+    // if binaryCache not enable, use original readNextRowGroup method.
+    if (!useBinaryCache) {
+      return super.readNextRowGroup();
+    }
+
+    // if binaryCache enable or mixed read enable, we should run this logic.
     if (currentBlock == blocks.size()) {
       return null;
     }
+
     BlockMetaData block = blocks.get(currentBlock);
     if (block.getRowCount() == 0) {
       throw new RuntimeException("Illegal row group of 0 rows");
     }
     this.currentRowGroup = new ColumnChunkPageReadStore(block.getRowCount());
-    // prepare the list of consecutive chunks to read them in one scan
-    List<OapConsecutiveChunkList> allChunks = new ArrayList<>();
-    OapConsecutiveChunkList currentChunks = null;
+
+    List<ColumnChunk> allChunks = new ArrayList<>();
     for (ColumnChunkMetaData mc : block.getColumns()) {
       ColumnPath pathKey = mc.getPath();
       BenchmarkCounter.incrementTotalBytes(mc.getTotalSize());
       ColumnDescriptor columnDescriptor = paths.get(pathKey);
       if (columnDescriptor != null) {
         long startingPos = mc.getStartingPos();
-        // first chunk or not consecutive => new list
-        if (currentChunks == null || currentChunks.endPos() != startingPos) {
-          currentChunks = new OapConsecutiveChunkList(startingPos);
-          allChunks.add(currentChunks);
-        }
-        currentChunks.addChunk(
-          new ChunkDescriptor(columnDescriptor, mc, startingPos, (int) mc.getTotalSize()));
+        int totalSize = (int) mc.getTotalSize();
+        allChunks.add(new ColumnChunk(columnDescriptor, mc, startingPos, totalSize));
       }
     }
     // actually read all the chunks
-    for (OapConsecutiveChunkList consecutiveChunks : allChunks) {
-      final List<Chunk> chunks = consecutiveChunks.readAll(f);
-      for (Chunk chunk : chunks) {
-        currentRowGroup.addColumn(chunk.descriptor.col, chunk.readAllPages());
-      }
+    for (ColumnChunk columnChunk : allChunks) {
+      final Chunk  chunk= columnChunk.read(f);
+      currentRowGroup.addColumn(chunk.descriptor.col, chunk.readAllPages());
     }
 
     // avoid re-reading bytes the dictionary reader is used after this call
@@ -108,45 +108,55 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
     return currentRowGroup;
   }
 
-  private class OapConsecutiveChunkList extends ConsecutiveChunkList {
+  public class ColumnChunk {
+    private final long offset;
+    private final int length;
+    private final ChunkDescriptor descriptor;
 
-    OapConsecutiveChunkList(long offset) {
-      super(offset);
+    ColumnChunk(
+        ColumnDescriptor col,
+        ColumnChunkMetaData metadata,
+        long offset,
+        int length) {
+      this.offset = offset;
+      this.length = length;
+      descriptor = new ChunkDescriptor(col, metadata, offset, length);
     }
 
-    @Override
-    public List<ParquetFileReader.Chunk> readAll(SeekableInputStream f) throws IOException {
-      List<Chunk> result = new ArrayList<>(chunks.size());
-      byte[] chunksBytes = new byte[length];
-      if (useBinaryCache) {
-        ParquetChunkFiberId fiberId =
-                new ParquetChunkFiberId(getPath().toUri().toString(), groupCount, fieldCount,
-                        offset, length);
-        fiberId.input(f);
-        FiberCache fiberCache = cacheManager.get(fiberId);
-        Platform.copyMemory(null, fiberCache.getBaseOffset(), chunksBytes,
-                Platform.BYTE_ARRAY_OFFSET, length);
-        // To avoid object leak
-        fiberId.input(null);
-      } else {
-        f.seek(offset);
-        f.readFully(chunksBytes);
-        // report in a counter the data we just scanned
-        BenchmarkCounter.incrementBytesRead(length);
-      }
+    Chunk read(SeekableInputStream f) throws IOException {
+      // TODO impl mixed read model.
+      byte[] chunksBytes = useBinaryCache ? readFromCache(f) : readFromFile(f);
+      return new WorkaroundChunk(descriptor, chunksBytes, 0, f);
+    }
 
-      int currentChunkOffset = 0;
-      for (int i = 0; i < chunks.size(); i++) {
-        ChunkDescriptor descriptor = chunks.get(i);
-        if (i < chunks.size() - 1) {
-          result.add(new Chunk(descriptor, chunksBytes, currentChunkOffset));
-        } else {
-          // because of a bug, the last chunk might be larger than descriptor.size
-          result.add(new WorkaroundChunk(descriptor, chunksBytes, currentChunkOffset, f));
+    private byte[] readFromCache(SeekableInputStream f) {
+      FiberCache fiberCache = null;
+      ParquetChunkFiberId fiberId = null;
+      try {
+        byte[] data = new byte[length];
+        fiberId = new ParquetChunkFiberId(dataFile, offset, length);
+        fiberId.input(f);
+        fiberCache = cacheManager.get(fiberId);
+        long fiberOffset = fiberCache.getBaseOffset();
+        Platform.copyMemory(null, fiberOffset, data, Platform.BYTE_ARRAY_OFFSET, length);
+        return data;
+      } finally {
+        if (fiberCache != null) {
+          fiberCache.release();
         }
-        currentChunkOffset += descriptor.size;
+        if (fiberId != null) {
+          fiberId.input(null);
+        }
       }
-      return result;
+    }
+
+    private byte[] readFromFile(SeekableInputStream f) throws IOException {
+      byte[] data = new byte[length];
+      f.seek(offset);
+      f.readFully(data);
+      // report in a counter the data we just scanned
+      BenchmarkCounter.incrementBytesRead(length);
+      return data;
     }
   }
 }

@@ -27,9 +27,7 @@ import org.apache.spark.unsafe.Platform
 private[oap] abstract class FiberId {}
 
 case class ParquetChunkFiberId(
-    file: String,
-    groupCount: Int,
-    fieldCount: Int,
+    file: DataFile,
     offset: Long,
     size: Int) extends FiberId {
 
@@ -39,11 +37,11 @@ case class ParquetChunkFiberId(
 
   def input: SeekableInputStream = _input
 
-  override def hashCode(): Int = (file + offset + size).hashCode
+  override def hashCode(): Int = (file.path + offset + size).hashCode
 
   override def equals(obj: Any): Boolean = obj match {
     case another: ParquetChunkFiberId =>
-      another.file == file && another.offset == offset && another.size == size
+      another.file.equals(file) && another.offset == offset && another.size == size
     case _ => false
   }
 
