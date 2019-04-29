@@ -28,35 +28,49 @@ private[oap] abstract class FiberId {}
 
 case class ParquetChunkFiberId(
     file: DataFile,
-    offset: Long,
-    size: Int) extends FiberId {
+    columnIndex: Int,
+    rowGroupId: Int) extends FiberId {
 
-  private var _input: SeekableInputStream = _
+  private var input: SeekableInputStream = _
+  private var offset: Long = _
+  private var length: Int = _
 
-  def input(in: SeekableInputStream): Unit = _input = in
+  def withLoadCacheParameters(input: SeekableInputStream, offset: Long, length: Int): Unit = {
+    this.input = input
+    this.offset = offset
+    this.length = length
+  }
 
-  def input: SeekableInputStream = _input
+  def cleanLoadCacheParameters(): Unit = {
+    input = null
+    offset = -1
+    length = 0
+  }
 
-  override def hashCode(): Int = (file.path + offset + size).hashCode
+  override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
 
   override def equals(obj: Any): Boolean = obj match {
     case another: ParquetChunkFiberId =>
-      another.file.equals(file) && another.offset == offset && another.size == size
+      another.columnIndex == columnIndex &&
+        another.rowGroupId == rowGroupId &&
+        another.file.path.equals(file.path)
     case _ => false
   }
 
   override def toString: String = {
-    s"type: ParquetChunkFiber file: $file, offset: $offset, size: $size"
+    s"type: ParquetChunkFiber rowGroup: $rowGroupId column: $columnIndex\n\tfile: ${file.path}"
   }
 
   def doCache(): FiberCache = {
-    val data = new Array[Byte](size)
-    _input.seek(offset)
-    _input.readFully(data)
-    val fiber = OapRuntime.getOrCreate.memoryManager.getEmptyDataFiberCache(size)
+    assert(input != null && offset >= 0 && length > 0,
+      "Illegal condition when load Parquet Chunk Fiber to cache.")
+    val data = new Array[Byte](length)
+    input.seek(offset)
+    input.readFully(data)
+    val fiber = OapRuntime.getOrCreate.memoryManager.getEmptyDataFiberCache(length)
     Platform.copyMemory(data,
-      Platform.BYTE_ARRAY_OFFSET, null, fiber.getBaseOffset, size)
-    BenchmarkCounter.incrementBytesRead(size)
+      Platform.BYTE_ARRAY_OFFSET, null, fiber.getBaseOffset, length)
+    BenchmarkCounter.incrementBytesRead(length)
     fiber
   }
 }

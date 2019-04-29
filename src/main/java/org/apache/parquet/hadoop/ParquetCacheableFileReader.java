@@ -21,15 +21,17 @@ package org.apache.parquet.hadoop;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.page.PageReadStore;
-import org.apache.parquet.hadoop.metadata.BlockMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnChunkMetaData;
 import org.apache.parquet.hadoop.metadata.ColumnPath;
+import org.apache.parquet.hadoop.metadata.OrderedBlockMetaData;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.counters.BenchmarkCounter;
 import org.apache.parquet.io.SeekableInputStream;
@@ -44,6 +46,8 @@ import org.apache.spark.sql.oap.OapRuntime$;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.Platform;
 
+import com.google.common.collect.Maps;
+
 public class ParquetCacheableFileReader extends ParquetFileReader {
 
   private FiberCacheManager cacheManager = OapRuntime$.MODULE$.getOrCreate().fiberCacheManager();
@@ -51,6 +55,9 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
   private DataFile dataFile;
 
   private boolean useBinaryCache;
+
+  // TODO should we use Object2IntLinkedOpenHashMap ?
+  private Map<ColumnPath, Integer> pathToColumnIndexMap = Collections.emptyMap();
 
   ParquetCacheableFileReader(Configuration conf, Path file, ParquetMetadata footer)
           throws IOException {
@@ -60,6 +67,12 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
 
     if (useBinaryCache) {
       this.dataFile = new ParquetDataFile(file.toUri().toString(), new StructType(), conf);
+      List<String[]> paths = footer.getFileMetaData().getSchema().getPaths();
+      int size = paths.size();
+      pathToColumnIndexMap = Maps.newHashMapWithExpectedSize(size);
+      for (int i = 0; i < size; i++) {
+        pathToColumnIndexMap.put(ColumnPath.get(paths.get(i)), i);
+      }
     }
   }
 
@@ -75,7 +88,8 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
       return null;
     }
 
-    BlockMetaData block = blocks.get(currentBlock);
+    OrderedBlockMetaData block = (OrderedBlockMetaData)blocks.get(currentBlock);
+    int rowGroupId = block.getRowGroupId();
     if (block.getRowCount() == 0) {
       throw new RuntimeException("Illegal row group of 0 rows");
     }
@@ -89,12 +103,15 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
       if (columnDescriptor != null) {
         long startingPos = mc.getStartingPos();
         int totalSize = (int) mc.getTotalSize();
-        allChunks.add(new ColumnChunk(columnDescriptor, mc, startingPos, totalSize));
+        int columnIndex = pathToColumnIndexMap.get(pathKey);
+        ColumnChunk columnChunk =
+          new ColumnChunk(columnDescriptor, mc, startingPos, totalSize, rowGroupId, columnIndex);
+        allChunks.add(columnChunk);
       }
     }
     // actually read all the chunks
     for (ColumnChunk columnChunk : allChunks) {
-      final Chunk  chunk= columnChunk.read(f);
+      final Chunk chunk = columnChunk.read(f);
       currentRowGroup.addColumn(chunk.descriptor.col, chunk.readAllPages());
     }
 
@@ -112,14 +129,20 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
     private final long offset;
     private final int length;
     private final ChunkDescriptor descriptor;
+    private final int rowGroupId;
+    private final int columnIndex;
 
     ColumnChunk(
         ColumnDescriptor col,
         ColumnChunkMetaData metadata,
         long offset,
-        int length) {
+        int length,
+        int rowGroupId,
+        int columnIndex) {
       this.offset = offset;
       this.length = length;
+      this.rowGroupId = rowGroupId;
+      this.columnIndex = columnIndex;
       descriptor = new ChunkDescriptor(col, metadata, offset, length);
     }
 
@@ -134,8 +157,8 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
       ParquetChunkFiberId fiberId = null;
       try {
         byte[] data = new byte[length];
-        fiberId = new ParquetChunkFiberId(dataFile, offset, length);
-        fiberId.input(f);
+        fiberId = new ParquetChunkFiberId(dataFile, columnIndex, rowGroupId);
+        fiberId.withLoadCacheParameters(f, offset, length);
         fiberCache = cacheManager.get(fiberId);
         long fiberOffset = fiberCache.getBaseOffset();
         Platform.copyMemory(null, fiberOffset, data, Platform.BYTE_ARRAY_OFFSET, length);
@@ -145,7 +168,7 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
           fiberCache.release();
         }
         if (fiberId != null) {
-          fiberId.input(null);
+          fiberId.cleanLoadCacheParameters();
         }
       }
     }
