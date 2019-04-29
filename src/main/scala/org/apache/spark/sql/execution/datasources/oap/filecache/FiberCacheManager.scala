@@ -172,6 +172,7 @@ private[sql] class FiberCacheManager(
         FiberCacheStatus(dataFile.path, fiberBitSet, fileMeta.getGroupCount, fileMeta.getFieldCount)
     }.toSeq
 
+    // TODO merge this with statusRawData
     val statusRawData2 = chunkFibers.groupBy(_.file).map {
       case (dataFile, chunkFiberSet) =>
         val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
