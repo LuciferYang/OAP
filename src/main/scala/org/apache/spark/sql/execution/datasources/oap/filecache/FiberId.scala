@@ -26,7 +26,7 @@ import org.apache.spark.unsafe.Platform
 
 private[oap] abstract class FiberId {}
 
-case class ParquetChunkFiberId(
+case class BinaryDataFiberId(
     file: DataFile,
     columnIndex: Int,
     rowGroupId: Int) extends FiberId {
@@ -50,7 +50,7 @@ case class ParquetChunkFiberId(
   override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
 
   override def equals(obj: Any): Boolean = obj match {
-    case another: ParquetChunkFiberId =>
+    case another: BinaryDataFiberId =>
       another.columnIndex == columnIndex &&
         another.rowGroupId == rowGroupId &&
         another.file.path.equals(file.path)

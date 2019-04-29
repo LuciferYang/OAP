@@ -152,7 +152,7 @@ private[sql] class FiberCacheManager(
     }
 
     val chunkFibers = cacheBackend.getFibers.collect {
-      case chunk: ParquetChunkFiberId => chunk
+      case chunk: BinaryDataFiberId => chunk
     }
 
     // Use a bit set to represent current cache status of one file.
@@ -177,8 +177,7 @@ private[sql] class FiberCacheManager(
         val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
         val getGroupCount = fileMeta.getGroupCount
         val fieldCount = fileMeta.getFieldCount
-        val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)
-        // TODO set correct bitset.
+        val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)1
         chunkFiberSet.foreach(fiber =>
           fiberBitSet.set(fiber.columnIndex + fileMeta.getFieldCount * fiber.rowGroupId))
         FiberCacheStatus(dataFile.path, fiberBitSet, getGroupCount, fieldCount)

@@ -38,7 +38,7 @@ import org.apache.parquet.io.SeekableInputStream;
 
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheManager;
-import org.apache.spark.sql.execution.datasources.oap.filecache.ParquetChunkFiberId;
+import org.apache.spark.sql.execution.datasources.oap.filecache.BinaryDataFiberId;
 import org.apache.spark.sql.execution.datasources.oap.io.DataFile;
 import org.apache.spark.sql.execution.datasources.oap.io.ParquetDataFile;
 import org.apache.spark.sql.internal.oap.OapConf$;
@@ -154,10 +154,10 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
 
     private byte[] readFromCache(SeekableInputStream f) {
       FiberCache fiberCache = null;
-      ParquetChunkFiberId fiberId = null;
+      BinaryDataFiberId fiberId = null;
       try {
         byte[] data = new byte[length];
-        fiberId = new ParquetChunkFiberId(dataFile, columnIndex, rowGroupId);
+        fiberId = new BinaryDataFiberId(dataFile, columnIndex, rowGroupId);
         fiberId.withLoadCacheParameters(f, offset, length);
         fiberCache = cacheManager.get(fiberId);
         long fiberOffset = fiberCache.getBaseOffset();
