@@ -180,4 +180,26 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
       }
     }
   }
+
+  test("binary cache") {
+    val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
+    data.toDF("key", "value").createOrReplaceTempView("t")
+    sql("insert overwrite table parquet_test select * from t")
+    withIndex(TestIndex("parquet_test", "index1")) {
+      sql("create oindex index1 on parquet_test (a)")
+
+      withSQLConf(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE.key -> "true") {
+        sql("SELECT * FROM parquet_test WHERE b = '1'")
+
+        checkAnswer(sql("SELECT * FROM parquet_test WHERE a = 1"),
+          Row(1, "this is test 1") :: Nil)
+
+        checkAnswer(sql("SELECT * FROM parquet_test WHERE a > 1 AND a <= 3"),
+          Row(2, "this is test 2") :: Row(3, "this is test 3") :: Nil)
+
+        checkAnswer(sql("SELECT * FROM parquet_test WHERE a > 1 AND b = 'this is test 2'"),
+          Row(2, "this is test 2") :: Nil)
+      }
+    }
+  }
 }
