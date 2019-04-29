@@ -327,6 +327,6 @@ object OapConf {
   val OAP_PARQUET_BINARY_DATA_CACHE_ENABLE =
     SqlConfAdapter.buildConf("spark.sql.oap.parquet.useBinaryCache")
       .internal()
-    .booleanConf
-    .createWithDefault(false)
+      .booleanConf
+      .createWithDefault(false)
 }

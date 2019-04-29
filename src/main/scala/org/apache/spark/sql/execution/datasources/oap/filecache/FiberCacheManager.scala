@@ -152,7 +152,7 @@ private[sql] class FiberCacheManager(
     }
 
     val chunkFibers = cacheBackend.getFibers.collect {
-      case chunk: BinaryDataFiberId => chunk
+      case binaryFiber: BinaryDataFiberId => binaryFiber
     }
 
     // Use a bit set to represent current cache status of one file.
@@ -163,7 +163,7 @@ private[sql] class FiberCacheManager(
     // group#1       -        cached        -          // BitSet(1 + 1 * 3) = 1
     // group#2       -          -         cached       // BitSet(2 + 2 * 3) = 1
     // The final bit set is: 010010001
-    val statusRawData = dataFibers.groupBy(_.file).map {
+    val dataFibersStatus = dataFibers.groupBy(_.file).map {
       case (dataFile, fiberSet) =>
         val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
         val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)
@@ -172,19 +172,17 @@ private[sql] class FiberCacheManager(
         FiberCacheStatus(dataFile.path, fiberBitSet, fileMeta.getGroupCount, fileMeta.getFieldCount)
     }.toSeq
 
-    // TODO merge this with statusRawData
-    val statusRawData2 = chunkFibers.groupBy(_.file).map {
-      case (dataFile, chunkFiberSet) =>
+    // TODO merge this with dataFibersStatus
+    val binaryDataFiberStatus = chunkFibers.groupBy(_.file).map {
+      case (dataFile, binaryFiberSet) =>
         val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
-        val getGroupCount = fileMeta.getGroupCount
-        val fieldCount = fileMeta.getFieldCount
         val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)1
-        chunkFiberSet.foreach(fiber =>
+        binaryFiberSet.foreach(fiber =>
           fiberBitSet.set(fiber.columnIndex + fileMeta.getFieldCount * fiber.rowGroupId))
-        FiberCacheStatus(dataFile.path, fiberBitSet, getGroupCount, fieldCount)
+        FiberCacheStatus(dataFile.path, fiberBitSet, fileMeta.getGroupCount, fileMeta.getFieldCount)
     }.toSeq
 
-    CacheStatusSerDe.serialize(statusRawData ++ statusRawData2)
+    CacheStatusSerDe.serialize(dataFibersStatus ++ binaryDataFiberStatus)
   }
 
   def cacheStats: CacheStats = cacheBackend.cacheStats
