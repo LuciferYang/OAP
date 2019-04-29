@@ -176,7 +176,7 @@ private[sql] class FiberCacheManager(
     val binaryDataFiberStatus = chunkFibers.groupBy(_.file).map {
       case (dataFile, binaryFiberSet) =>
         val fileMeta: DataFileMeta = OapRuntime.getOrCreate.dataFileMetaCacheManager.get(dataFile)
-        val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)1
+        val fiberBitSet = new OapBitSet(fileMeta.getGroupCount * fileMeta.getFieldCount)
         binaryFiberSet.foreach(fiber =>
           fiberBitSet.set(fiber.columnIndex + fileMeta.getFieldCount * fiber.rowGroupId))
         FiberCacheStatus(dataFile.path, fiberBitSet, fileMeta.getGroupCount, fileMeta.getFieldCount)
