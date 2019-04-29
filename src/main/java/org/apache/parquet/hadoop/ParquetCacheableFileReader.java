@@ -25,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.collect.Maps;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.column.ColumnDescriptor;
@@ -36,9 +37,9 @@ import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.hadoop.util.counters.BenchmarkCounter;
 import org.apache.parquet.io.SeekableInputStream;
 
+import org.apache.spark.sql.execution.datasources.oap.filecache.BinaryDataFiberId;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCache;
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheManager;
-import org.apache.spark.sql.execution.datasources.oap.filecache.BinaryDataFiberId;
 import org.apache.spark.sql.execution.datasources.oap.io.DataFile;
 import org.apache.spark.sql.execution.datasources.oap.io.ParquetDataFile;
 import org.apache.spark.sql.internal.oap.OapConf$;
@@ -46,7 +47,6 @@ import org.apache.spark.sql.oap.OapRuntime$;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.Platform;
 
-import com.google.common.collect.Maps;
 
 public class ParquetCacheableFileReader extends ParquetFileReader {
 
