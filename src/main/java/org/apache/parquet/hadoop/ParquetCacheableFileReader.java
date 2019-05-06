@@ -56,7 +56,6 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
 
   private boolean useBinaryCache;
 
-  // TODO should we use Object2IntLinkedOpenHashMap ?
   private Map<ColumnPath, Integer> pathToColumnIndexMap = Collections.emptyMap();
 
   ParquetCacheableFileReader(Configuration conf, Path file, ParquetMetadata footer)

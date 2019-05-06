@@ -26,10 +26,8 @@ import org.apache.spark.unsafe.Platform
 
 private[oap] abstract class FiberId {}
 
-case class BinaryDataFiberId(
-    file: DataFile,
-    columnIndex: Int,
-    rowGroupId: Int) extends FiberId {
+case class BinaryDataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
+  DataFiberId {
 
   private var input: SeekableInputStream = _
   private var offset: Long = _
@@ -75,13 +73,13 @@ case class BinaryDataFiberId(
   }
 }
 
-private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
-    FiberId {
+private[oap] case class VectorDataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
+  DataFiberId {
 
   override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
 
   override def equals(obj: Any): Boolean = obj match {
-    case another: DataFiberId =>
+    case another: VectorDataFiberId =>
       another.columnIndex == columnIndex &&
         another.rowGroupId == rowGroupId &&
         another.file.path.equals(file.path)
@@ -91,6 +89,12 @@ private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId
   override def toString: String = {
     s"type: DataFiber rowGroup: $rowGroupId column: $columnIndex\n\tfile: ${file.path}"
   }
+}
+
+private[oap] abstract class DataFiberId extends FiberId {
+  def file: DataFile
+  def columnIndex: Int
+  def rowGroupId: Int
 }
 
 private[oap] case class BTreeFiberId(
