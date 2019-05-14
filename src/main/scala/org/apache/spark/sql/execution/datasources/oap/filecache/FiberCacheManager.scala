@@ -145,10 +145,13 @@ private[sql] class FiberCacheManager(
   private[oap] def clearAllFibers(): Unit = cacheBackend.cleanUp
 
   // TODO: test case, consider data eviction, try not use DataFileMeta which my be costly
+  // TODO: At present, we do not distinguish VectorDataFiber from BinaryDataFiber, if we use
+  //  vector cache and binary together, from driver side we can not identify them.
   private[sql] def status(): String = {
     logDebug(s"Reporting ${cacheBackend.cacheCount} fibers to the master")
     val dataFibers = cacheBackend.getFibers.collect {
-      case fiber: DataFiberId => fiber
+      case vector: VectorDataFiberId => vector
+      case binary: BinaryDataFiberId => binary
     }
 
     // Use a bit set to represent current cache status of one file.

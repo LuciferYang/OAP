@@ -30,7 +30,7 @@ import org.apache.parquet.schema.{MessageType, Type}
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.MemoryMode
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.execution.datasources.oap.filecache.DataFiberId
+import org.apache.spark.sql.execution.datasources.oap.filecache.VectorDataFiberId
 import org.apache.spark.sql.execution.datasources.parquet.ParquetReadSupportWrapper
 import org.apache.spark.sql.execution.vectorized._
 import org.apache.spark.sql.oap.OapRuntime
@@ -158,7 +158,7 @@ class VectorizedCacheReader(
         } else {
           val start = System.nanoTime()
           val fiberCache =
-            OapRuntime.getOrCreate.fiberCacheManager.get(DataFiberId(dataFile, id, groupId))
+            OapRuntime.getOrCreate.fiberCacheManager.get(VectorDataFiberId(dataFile, id, groupId))
           val end = System.nanoTime()
           loadFiberTime += (end - start)
           dataFile.update(id, fiberCache)

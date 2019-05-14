@@ -17,17 +17,69 @@
 
 package org.apache.spark.sql.execution.datasources.oap.filecache
 
+import org.apache.parquet.hadoop.util.counters.BenchmarkCounter
+import org.apache.parquet.io.SeekableInputStream
+
 import org.apache.spark.sql.execution.datasources.oap.io.DataFile
+import org.apache.spark.sql.oap.OapRuntime
+import org.apache.spark.unsafe.Platform
 
 private[oap] abstract class FiberId {}
 
-private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
-    FiberId {
+case class BinaryDataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
+  DataFiberId {
+
+  private var input: SeekableInputStream = _
+  private var offset: Long = _
+  private var length: Int = _
+
+  def withLoadCacheParameters(input: SeekableInputStream, offset: Long, length: Int): Unit = {
+    this.input = input
+    this.offset = offset
+    this.length = length
+  }
+
+  def cleanLoadCacheParameters(): Unit = {
+    input = null
+    offset = -1
+    length = 0
+  }
 
   override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
 
   override def equals(obj: Any): Boolean = obj match {
-    case another: DataFiberId =>
+    case another: BinaryDataFiberId =>
+      another.columnIndex == columnIndex &&
+        another.rowGroupId == rowGroupId &&
+        another.file.path.equals(file.path)
+    case _ => false
+  }
+
+  override def toString: String = {
+    s"type: ParquetChunkFiber rowGroup: $rowGroupId column: $columnIndex\n\tfile: ${file.path}"
+  }
+
+  def doCache(): FiberCache = {
+    assert(input != null && offset >= 0 && length > 0,
+      "Illegal condition when load Parquet Chunk Fiber to cache.")
+    val data = new Array[Byte](length)
+    input.seek(offset)
+    input.readFully(data)
+    val fiber = OapRuntime.getOrCreate.memoryManager.getEmptyDataFiberCache(length)
+    Platform.copyMemory(data,
+      Platform.BYTE_ARRAY_OFFSET, null, fiber.getBaseOffset, length)
+    BenchmarkCounter.incrementBytesRead(length)
+    fiber
+  }
+}
+
+private[oap] case class VectorDataFiberId(file: DataFile, columnIndex: Int, rowGroupId: Int) extends
+  DataFiberId {
+
+  override def hashCode(): Int = (file.path + columnIndex + rowGroupId).hashCode
+
+  override def equals(obj: Any): Boolean = obj match {
+    case another: VectorDataFiberId =>
       another.columnIndex == columnIndex &&
         another.rowGroupId == rowGroupId &&
         another.file.path.equals(file.path)
@@ -37,6 +89,12 @@ private[oap] case class DataFiberId(file: DataFile, columnIndex: Int, rowGroupId
   override def toString: String = {
     s"type: DataFiber rowGroup: $rowGroupId column: $columnIndex\n\tfile: ${file.path}"
   }
+}
+
+private[oap] abstract class DataFiberId extends FiberId {
+  def file: DataFile
+  def columnIndex: Int
+  def rowGroupId: Int
 }
 
 private[oap] case class BTreeFiberId(

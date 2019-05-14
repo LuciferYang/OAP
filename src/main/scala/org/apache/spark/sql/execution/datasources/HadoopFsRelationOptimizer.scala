@@ -65,6 +65,17 @@ object HadoopFsRelationOptimizer extends Logging {
             relation.options,
             selectedPartitions.flatMap(p => p.files))
 
+        def canUseBinaryCache: Boolean = {
+          val runtimeConf = relation.sparkSession.conf
+          val ret = runtimeConf.get(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE)
+          logDebug(s"config - ${OapConf.OAP_PARQUET_DATA_CACHE_ENABLED.key} is $ret")
+          if (ret) {
+            logInfo("data cache enable and suitable for use , " +
+              "will replace with OptimizedParquetFileFormat.")
+          }
+          ret
+        }
+
         def canUseCache: Boolean = {
           val runtimeConf = relation.sparkSession.conf
           val cacheEnabled = runtimeConf.get(OapConf.OAP_PARQUET_DATA_CACHE_ENABLED)
@@ -90,7 +101,7 @@ object HadoopFsRelationOptimizer extends Logging {
           ret
         }
 
-        if (canUseCache || canUseIndex) {
+        if (canUseBinaryCache || canUseCache || canUseIndex) {
           (relation.copy(fileFormat = optimizedParquetFileFormat)(relation.sparkSession), true)
         } else {
           logInfo("neither index nor data cache is available, retain ParquetFileFormat.")

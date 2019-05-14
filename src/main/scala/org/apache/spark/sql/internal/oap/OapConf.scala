@@ -323,4 +323,10 @@ object OapConf {
         "is empty, it will store in the data file path")
       .stringConf
       .createWithDefault("")
+
+  val OAP_PARQUET_BINARY_DATA_CACHE_ENABLE =
+    SqlConfAdapter.buildConf("spark.sql.oap.parquet.useBinaryCache")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
 }
