@@ -21,6 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 import scala.collection.JavaConverters._
 
+import com.github.benmanes.caffeine.cache.{Caffeine, RemovalCause}
+import com.github.benmanes.caffeine.cache
 import com.google.common.cache._
 
 import org.apache.spark.internal.Logging
@@ -209,6 +211,115 @@ class GuavaOapCache(cacheMemory: Long, cacheGuardianMemory: Long) extends OapCac
   }
 
   override def cacheCount: Long = cacheInstance.size()
+
+  override def pendingFiberCount: Int = cacheGuardian.pendingFiberCount
+
+  override def cleanUp: Unit = {
+    super.cleanUp
+    cacheInstance.cleanUp
+  }
+}
+
+class CaffeineOapCache(cacheMemory: Long, cacheGuardianMemory: Long) extends OapCache with Logging {
+
+  // TODO: CacheGuardian can also track cache statistics periodically
+  private val cacheGuardian = new CacheGuardian(cacheGuardianMemory)
+  cacheGuardian.start()
+
+  private val KB: Double = 1024
+  private val MAX_WEIGHT = (cacheMemory / KB).toInt
+  private val CONCURRENCY_LEVEL = 4
+
+  // Total cached size for debug purpose, not include pending fiber
+  private val _cacheSize: AtomicLong = new AtomicLong(0)
+
+  private val removalListener =
+    new com.github.benmanes.caffeine.cache.RemovalListener[FiberId, FiberCache] {
+      override def onRemoval(id: FiberId, cache: FiberCache, removalCause: RemovalCause): Unit = {
+        logDebug(s"Put fiber into removal list. Fiber: $id")
+        cacheGuardian.addRemovalFiber(id, cache)
+        _cacheSize.addAndGet(-cache.size())
+        decFiberCountAndSize(id, 1, cache.size())
+      }
+    }
+
+  private val weigher = new com.github.benmanes.caffeine.cache.Weigher[FiberId, FiberCache] {
+    override def weigh(key: FiberId, value: FiberCache): Int = {
+      // We should calculate the weigh with the occupied size of the block.
+      math.ceil(value.getOccupiedSize() / KB).toInt
+    }
+  }
+
+  private val cacheLoader =
+    new com.github.benmanes.caffeine.cache.CacheLoader[FiberId, FiberCache] {
+      override def load(key: FiberId): FiberCache = {
+        val startLoadingTime = System.currentTimeMillis()
+        val fiberCache = cache(key)
+        incFiberCountAndSize(key, 1, fiberCache.size())
+        logDebug(
+          "Load missed fiber took %s. Fiber: %s".format(Utils.getUsedTimeMs(startLoadingTime), key))
+        _cacheSize.addAndGet(fiberCache.size())
+        fiberCache
+      }
+    }
+
+  private val cacheInstance = Caffeine.newBuilder()
+    .recordStats()
+    .removalListener(removalListener)
+    .maximumWeight(MAX_WEIGHT)
+    .weigher(weigher)
+    .build[FiberId, FiberCache](cacheLoader)
+
+
+  override def get(fiber: FiberId): FiberCache = {
+    val readLock = OapRuntime.getOrCreate.fiberLockManager.getFiberLock(fiber).readLock()
+    readLock.lock()
+    try {
+      val fiberCache = cacheInstance.get(fiber)
+      // Avoid loading a fiber larger than MAX_WEIGHT / CONCURRENCY_LEVEL
+      // TODO need this?
+      assert(fiberCache.size() <= MAX_WEIGHT * KB / CONCURRENCY_LEVEL,
+        s"Failed to cache fiber(${Utils.bytesToString(fiberCache.size())}) " +
+          s"with cache's MAX_WEIGHT" +
+          s"(${Utils.bytesToString(MAX_WEIGHT.toLong * KB.toLong)}) / $CONCURRENCY_LEVEL")
+      fiberCache.occupy()
+      fiberCache
+    } finally {
+      readLock.unlock()
+    }
+  }
+
+  override def getIfPresent(fiber: FiberId): FiberCache = cacheInstance.getIfPresent(fiber)
+
+  override def getFibers: Set[FiberId] = {
+    cacheInstance.asMap().keySet().asScala.toSet
+  }
+
+  override def invalidate(fiber: FiberId): Unit = {
+    cacheInstance.invalidate(fiber)
+  }
+
+  override def invalidateAll(fibers: Iterable[FiberId]): Unit = {
+    cacheInstance.invalidateAll(fibers.asJava)
+  }
+
+  override def cacheSize: Long = _cacheSize.get()
+
+  override def cacheStats: CacheStats = {
+    val stats = cacheInstance.stats()
+    CacheStats(
+      dataFiberCount.get(), dataFiberSize.get(),
+      indexFiberCount.get(), indexFiberSize.get(),
+      pendingFiberCount, cacheGuardian.pendingFiberSize,
+      stats.hitCount(),
+      stats.missCount(),
+      stats.loadCount(),
+      stats.totalLoadTime(),
+      stats.evictionCount()
+    )
+  }
+
+  override def cacheCount: Long = cacheInstance.estimatedSize()
 
   override def pendingFiberCount: Int = cacheGuardian.pendingFiberCount
 

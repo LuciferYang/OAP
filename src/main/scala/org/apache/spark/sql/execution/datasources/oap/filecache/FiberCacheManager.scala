@@ -97,6 +97,7 @@ private[sql] class FiberCacheManager(
     sparkEnv: SparkEnv, memoryManager: MemoryManager) extends Logging {
 
   private val GUAVA_CACHE = "guava"
+  private val CAFFEINE_CACHE = "caffeine"
   private val SIMPLE_CACHE = "simple"
   private val DEFAULT_CACHE_STRATEGY = GUAVA_CACHE
 
@@ -104,6 +105,8 @@ private[sql] class FiberCacheManager(
     val cacheName = sparkEnv.conf.get("spark.oap.cache.strategy", DEFAULT_CACHE_STRATEGY)
     if (cacheName.equals(GUAVA_CACHE)) {
       new GuavaOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory)
+    } else if (cacheName.equals(CAFFEINE_CACHE)) {
+      new CaffeineOapCache(memoryManager.cacheMemory, memoryManager.cacheGuardianMemory)
     } else if (cacheName.equals(SIMPLE_CACHE)) {
       new SimpleOapCache()
     } else {
