@@ -62,7 +62,7 @@ public class ParquetCacheableFileReader extends ParquetFileReader {
           throws IOException {
     super(conf, file, footer);
     this.useBinaryCache =
-            conf.getBoolean(OapConf$.MODULE$.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE().key(), false);
+      conf.getBoolean(OapConf$.MODULE$.OAP_PARQUET_BINARY_DATA_CACHE_ENABLED().key(), false);
 
     if (useBinaryCache) {
       this.dataFile = new ParquetDataFile(file.toUri().toString(), new StructType(), conf);

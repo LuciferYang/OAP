@@ -67,7 +67,7 @@ object HadoopFsRelationOptimizer extends Logging {
 
         def canUseBinaryCache: Boolean = {
           val runtimeConf = relation.sparkSession.conf
-          val ret = runtimeConf.get(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE)
+          val ret = runtimeConf.get(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLED)
           logDebug(s"config - ${OapConf.OAP_PARQUET_DATA_CACHE_ENABLED.key} is $ret")
           if (ret) {
             logInfo("data cache enable and suitable for use , " +

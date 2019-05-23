@@ -188,7 +188,7 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
     withIndex(TestIndex("parquet_test", "index1")) {
       sql("create oindex index1 on parquet_test (a)")
 
-      withSQLConf(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLE.key -> "true") {
+      withSQLConf(OapConf.OAP_PARQUET_BINARY_DATA_CACHE_ENABLED.key -> "true") {
         sql("SELECT * FROM parquet_test WHERE b = '1'")
 
         checkAnswer(sql("SELECT * FROM parquet_test WHERE a = 1"),

@@ -587,7 +587,8 @@ public class ParquetFileReader implements Closeable {
     this.conf = conf;
     FileSystem fs = file.getFileSystem(conf);
     this.fileStatus = fs.getFileStatus(file);
-    this.f = HadoopStreams.wrap(fs.open(file));
+    // this.f = HadoopStreams.wrap(fs.open(file));
+    this.f = LazyInitSeekableInputStream.wrap(file, conf);
     this.footer = footer;
     this.fileMetaData = footer.getFileMetaData();
     this.blocks = footer.getBlocks();
