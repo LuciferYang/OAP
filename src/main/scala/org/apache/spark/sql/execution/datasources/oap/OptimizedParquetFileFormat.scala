@@ -33,6 +33,8 @@ import org.apache.spark.util.SerializableConfiguration
 
 private[sql] class OptimizedParquetFileFormat extends OapFileFormat {
 
+  override protected def isPushDownIsNotNull: Boolean = false
+
   override def prepareWrite(
       sparkSession: SparkSession,
       job: Job,

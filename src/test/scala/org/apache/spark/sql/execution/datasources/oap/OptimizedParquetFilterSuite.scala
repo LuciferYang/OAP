@@ -178,4 +178,32 @@ class OptimizedParquetFilterSuite extends QueryTest with SharedOapContext with B
       }
     }
   }
+
+  test("OAP#1056 Parquet not put down isNotNull index") {
+    val data: Seq[(Int, String)] = (1 to 300).map { i => (i, s"this is test $i") }
+    data.toDF("key", "value").createOrReplaceTempView("t")
+    sql("insert overwrite table parquet_test select * from t")
+    withIndex(TestIndex("parquet_test", "index1"), TestIndex("parquet_test", "index2")) {
+      sql("create oindex index1 on parquet_test (b)")
+      sql("create oindex index2 on parquet_test (a)")
+      val df = sql("SELECT b FROM parquet_test WHERE b like '%this is test%' and a = 1")
+      checkAnswer(df, Row("this is test 1") :: Nil)
+      val plans = new ArrayBuffer[SparkPlan]
+      df.queryExecution.executedPlan.foreach(node => plans.append(node))
+      val dataSources = plans.filter(p => p.isInstanceOf[DataSourceScanExec])
+      assert(dataSources.nonEmpty)
+      dataSources.foreach(p =>
+        p.asInstanceOf[DataSourceScanExec].relation match {
+          case h: HadoopFsRelation =>
+            assert(h.fileFormat.isInstanceOf[OptimizedParquetFileFormat])
+            val format = h.fileFormat.asInstanceOf[OptimizedParquetFileFormat]
+            val hitIndexColumns = format.getHitIndexColumns
+            assert(hitIndexColumns.nonEmpty)
+            assert(hitIndexColumns.size == 1)
+            assert(hitIndexColumns.head._1 == "a")
+          case _ => assert(false)
+        }
+      )
+    }
+  }
 }

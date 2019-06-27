@@ -131,6 +131,8 @@ private[sql] class OapFileFormat extends FileFormat
 
   override def shortName(): String = "oap"
 
+  protected def isPushDownIsNotNull: Boolean = true
+
   /**
    * Returns whether the reader will return the rows as batch or not.
    */
@@ -248,7 +250,7 @@ private[sql] class OapFileFormat extends FileFormat
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case IsNull(attribute) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
-        case IsNotNull(attribute) =>
+        case IsNotNull(attribute) if isPushDownIsNotNull =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
         case StringStartsWith(attribute, _) =>
           if (attr ==  null || attr == attribute) {attr = attribute; true} else false
