@@ -226,8 +226,7 @@ class CaffeineOapCache(cacheMemory: Long, cacheGuardianMemory: Long) extends Oap
   private val cacheGuardian = new CacheGuardian(cacheGuardianMemory)
   cacheGuardian.start()
 
-  private val KB: Double = 1024
-  private val MAX_WEIGHT = (cacheMemory / KB).toInt
+  private val MAX_WEIGHT = cacheMemory
   private val CONCURRENCY_LEVEL = 4
 
   // Total cached size for debug purpose, not include pending fiber
@@ -246,7 +245,7 @@ class CaffeineOapCache(cacheMemory: Long, cacheGuardianMemory: Long) extends Oap
   private val weigher = new com.github.benmanes.caffeine.cache.Weigher[FiberId, FiberCache] {
     override def weigh(key: FiberId, value: FiberCache): Int = {
       // We should calculate the weigh with the occupied size of the block.
-      math.ceil(value.getOccupiedSize() / KB).toInt
+      value.getOccupiedSize().toInt
     }
   }
 
@@ -278,10 +277,10 @@ class CaffeineOapCache(cacheMemory: Long, cacheGuardianMemory: Long) extends Oap
       val fiberCache = cacheInstance.get(fiber)
       // Avoid loading a fiber larger than MAX_WEIGHT / CONCURRENCY_LEVEL
       // TODO need this?
-      assert(fiberCache.size() <= MAX_WEIGHT * KB / CONCURRENCY_LEVEL,
+      assert(fiberCache.size() <= MAX_WEIGHT / CONCURRENCY_LEVEL,
         s"Failed to cache fiber(${Utils.bytesToString(fiberCache.size())}) " +
           s"with cache's MAX_WEIGHT" +
-          s"(${Utils.bytesToString(MAX_WEIGHT.toLong * KB.toLong)}) / $CONCURRENCY_LEVEL")
+          s"(${Utils.bytesToString(MAX_WEIGHT.toLong)}) / $CONCURRENCY_LEVEL")
       fiberCache.occupy()
       fiberCache
     } finally {
