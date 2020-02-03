@@ -1553,7 +1553,8 @@ class ParquetFiberDataReaderSuite extends ParquetDataFileSuite {
     val rowCount = footer.getBlocks.get(0).getRowCount.toInt
     val vector = ColumnVectorAdapter.allocate(rowCount, IntegerType, MemoryMode.ON_HEAP)
     val blockMetaData = footer.getBlocks.get(0)
-    val columnDescriptor = new ColumnDescriptor(Array(s"${fileName}_temp"), INT32, 0, 0)
+    val intType = new PrimitiveType(Type.Repetition.OPTIONAL, INT32, 0, "")
+    val columnDescriptor = new ColumnDescriptor(Array(s"${fileName}_temp"), intType, 0, 0)
     val exception = intercept[IOException] {
       reader.readFiberData(blockMetaData, columnDescriptor)
     }

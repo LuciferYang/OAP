@@ -24,6 +24,8 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.hadoop.fs.{FSDataInputStream, FSDataOutputStream}
 import org.apache.parquet.column.statistics._
 import org.apache.parquet.format.{CompressionCodec, Encoding}
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName._
+import org.apache.parquet.schema.Types
 
 import org.apache.spark.sql.types._
 
@@ -132,14 +134,27 @@ private[oap] object ColumnStatistics {
 
   type ParquetStatistics = org.apache.parquet.column.statistics.Statistics[_ <: Comparable[_]]
 
+  private val booleanType = Types.optional(BOOLEAN).named("oap_fake_boolean_type")
+  private val intType = Types.optional(INT32).named("oap_fake_int32_type")
+  private val binaryType = Types.optional(BINARY).named("oap_fake_binary_type")
+  private val floatType = Types.optional(FLOAT).named("oap_fake_float_type")
+  private val doubleType = Types.optional(DOUBLE).named("oap_fake_double_type")
+  private val longType = Types.optional(INT64).named("oap_fake_int64_type")
+
   def getStatsBasedOnType(dataType: DataType): ParquetStatistics = {
     dataType match {
-      case BooleanType => new BooleanStatistics()
-      case IntegerType | ByteType | DateType | ShortType => new IntStatistics()
-      case StringType | BinaryType => new BinaryStatistics()
-      case FloatType => new FloatStatistics()
-      case DoubleType => new DoubleStatistics()
-      case LongType => new LongStatistics()
+      case BooleanType =>
+        Statistics.createStats(booleanType).asInstanceOf[BooleanStatistics]
+      case IntegerType | ByteType | DateType | ShortType =>
+        Statistics.createStats(intType).asInstanceOf[IntStatistics]
+      case StringType | BinaryType =>
+        Statistics.createStats(binaryType).asInstanceOf[BinaryStatistics]
+      case FloatType =>
+        Statistics.createStats(floatType).asInstanceOf[FloatStatistics]
+      case DoubleType =>
+        Statistics.createStats(doubleType).asInstanceOf[DoubleStatistics]
+      case LongType =>
+        Statistics.createStats(longType).asInstanceOf[LongStatistics]
       case _ => sys.error(s"Not support data type: $dataType")
     }
   }
