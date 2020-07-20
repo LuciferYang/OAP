@@ -344,7 +344,7 @@ private[oap] class OapOutputWriterFactory(
   }
 
   // this is called from driver side
-  override def commitJob(taskResults: Array[WriteResult]): Unit = {
+  def commitJob(taskResults: Array[WriteResult]): Unit = {
     // TODO supposedly, we put one single meta file for each partition, however,
     // we need to thinking about how to read data from partitions
     val outputRoot = FileOutputFormat.getOutputPath(job)
@@ -379,8 +379,6 @@ private[oap] class OapOutputWriterFactory(
       addOldMetaToBuilder(outputRoot, builder)
       DataSourceMeta.write(path, conf, builder.build())
     }
-
-    super.commitJob(taskResults)
   }
 }
 

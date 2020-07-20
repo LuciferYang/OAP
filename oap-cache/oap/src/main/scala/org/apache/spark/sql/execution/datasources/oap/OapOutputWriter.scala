@@ -34,7 +34,7 @@ private[oap] class OapOutputWriter(
   private var rowCount = 0
   private var partitionString: String = ""
 
-  override def setPartitionString(ps: String): Unit = {
+  def setPartitionString(ps: String): Unit = {
     partitionString = ps
   }
 
@@ -57,7 +57,7 @@ private[oap] class OapOutputWriter(
     writer.close()
   }
 
-  override def writeStatus(): WriteResult = {
+  def writeStatus(): WriteResult = {
     OapWriteResult(dataFileName, rowCount, partitionString)
   }
 
