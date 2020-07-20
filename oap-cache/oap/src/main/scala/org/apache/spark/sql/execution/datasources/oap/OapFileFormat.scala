@@ -113,21 +113,7 @@ private[sql] class OapFileFormat extends FileFormat
   override def prepareWrite(
       sparkSession: SparkSession,
       job: Job, options: Map[String, String],
-      dataSchema: StructType): OutputWriterFactory = {
-    val conf = job.getConfiguration
-
-    // First use table option, if not, use SqlConf, else, use default value.
-    conf.set(OapFileFormat.COMPRESSION, options.getOrElse("compression",
-      sparkSession.conf.get(OapConf.OAP_COMPRESSION.key, OapFileFormat.DEFAULT_COMPRESSION)))
-
-    conf.set(OapFileFormat.ROW_GROUP_SIZE, options.getOrElse("rowgroup",
-      sparkSession.conf.get(OapConf.OAP_ROW_GROUP_SIZE.key, OapFileFormat.DEFAULT_ROW_GROUP_SIZE)))
-
-    new OapOutputWriterFactory(
-      dataSchema,
-      job,
-      options)
-  }
+      dataSchema: StructType): OutputWriterFactory = null
 
   override def shortName(): String = "oap"
 
