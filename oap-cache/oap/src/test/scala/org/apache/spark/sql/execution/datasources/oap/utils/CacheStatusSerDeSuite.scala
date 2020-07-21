@@ -23,7 +23,6 @@ import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.execution.datasources.oap.filecache.FiberCacheStatus
-import org.apache.spark.sql.execution.datasources.oap.io.{OapDataFileMeta, OapDataFileMetaV1}
 import org.apache.spark.util.collection.OapBitSet
 
 class CacheStatusSerDeSuite extends SparkFunSuite {
@@ -41,14 +40,6 @@ class CacheStatusSerDeSuite extends SparkFunSuite {
     assertStringEquals(bitSetStr, CacheStatusSerDeTestStrs.bitSetString)
     val newBitSet = CacheStatusSerDe.bitSetFromJson(parse(bitSetStr))
     assertBitSetEquals(bitSet, newBitSet)
-  }
-
-  test("test data file meta") {
-    val dataFileMeta = new OapDataFileMetaV1(
-      rowCountInEachGroup = 3, rowCountInLastGroup = 2, groupCount = 3, fieldCount = 3)
-    val dataFileMetaStr = compact(render(CacheStatusSerDe.dataFileMetaToJson(dataFileMeta)))
-    val newDataFileMeta = CacheStatusSerDe.dataFileMetaFromJson(parse(dataFileMetaStr))
-    assertDataFileMetaEquals(dataFileMeta, newDataFileMeta)
   }
 
   test("test status raw data") {
@@ -105,22 +96,12 @@ class CacheStatusSerDeSuite extends SparkFunSuite {
     }
   }
 
-  private def assertDataFileMetaEquals(
-                                        dataFileMeta1: OapDataFileMeta,
-                                        dataFileMeta2: OapDataFileMeta) {
-    assert(dataFileMeta1.rowCountInEachGroup === dataFileMeta2.rowCountInEachGroup)
-    assert(dataFileMeta1.rowCountInLastGroup === dataFileMeta2.rowCountInLastGroup)
-    assert(dataFileMeta1.groupCount === dataFileMeta2.groupCount)
-    assert(dataFileMeta1.fieldCount === dataFileMeta2.fieldCount)
-  }
-
   private def assertStatusRawDataEquals(data1: FiberCacheStatus, data2: FiberCacheStatus): Unit = {
     assert(data1.file === data2.file)
     assertBitSetEquals(data1.bitmask, data2.bitmask)
     assert(data1.groupCount === data2.groupCount)
     assert(data1.fieldCount === data2.fieldCount)
   }
-
 }
 
 private[oap] object CacheStatusSerDeTestStrs {
