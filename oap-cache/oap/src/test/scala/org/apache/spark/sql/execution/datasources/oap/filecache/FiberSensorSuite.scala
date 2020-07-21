@@ -59,7 +59,7 @@ class FiberSensorSuite extends QueryTest with SharedOapContext with BeforeAndAft
     currentPath = path
 
     sql(s"""CREATE TEMPORARY VIEW oap_test (a INT, b STRING)
-           | USING oap
+           | USING parquet
            | OPTIONS (path '$path')""".stripMargin)
     OapRuntime.getOrCreate.fiberCacheManager.clearAllFibers()
     fiberSensor.executorToCacheManager.clear()
