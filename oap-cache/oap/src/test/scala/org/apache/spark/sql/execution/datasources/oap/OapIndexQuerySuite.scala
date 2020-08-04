@@ -31,7 +31,6 @@ class OapIndexQuerySuite extends QueryTest with SharedOapContext with BeforeAndA
   override def beforeEach(): Unit = {
     val path1 = Utils.createTempDir().getAbsolutePath
     val path2 = Utils.createTempDir().getAbsolutePath
-    
     sql(s"""CREATE TEMPORARY VIEW parquet_test_1 (a INT, b STRING)
            | USING parquet
            | OPTIONS (path '$path1')""".stripMargin)
