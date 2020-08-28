@@ -316,31 +316,3 @@ class OapFileSourceStrategyForOrcSuite extends OapFileSourceStrategySuite {
     )
   }
 }
-
-class OapFileSourceStrategyForOapSuite extends OapFileSourceStrategySuite {
-  protected def testTableName: String = "oap_test"
-
-  protected def fileFormat: String = "oap"
-
-  test("Project-> Filter -> Scan") {
-    verifyProjectFilterScan(
-      indexColumn = "b",
-      format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
-    )
-  }
-
-  test("Project -> Scan") {
-    verifyProjectScan(
-      format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
-    )
-  }
-
-  test("Scan") {
-    verifyScan(
-      format => format.isInstanceOf[OapFileFormat],
-      (plan1, plan2) => plan1.sameResult(plan2)
-    )
-  }
-}
