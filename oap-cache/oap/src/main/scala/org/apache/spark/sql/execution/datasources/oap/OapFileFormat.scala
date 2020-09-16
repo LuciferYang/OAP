@@ -199,13 +199,6 @@ private[oap] object INDEX_STAT extends Enumeration {
 private[sql] object OapFileFormat {
   val OAP_INDEX_EXTENSION = ".index"
   val OAP_META_FILE = ".oap.meta"
-  // This is used in DataSourceMeta file to indicate Parquet/OAP file format
-  // For OAP data files, the version info is written in data file header, hence various versions of
-  // OAP data file(i.e. one partition uses V1 while another uses V2) are supported in different
-  // distributed tasks
-  val OAP_DATA_FILE_CLASSNAME = classOf[OapDataFile].getCanonicalName
-  // This is used while actually reading a Parquet/OAP data file
-  val OAP_DATA_FILE_V1_CLASSNAME = classOf[OapDataFileV1].getCanonicalName
 
   val PARQUET_DATA_FILE_CLASSNAME = classOf[ParquetDataFile].getCanonicalName
   val ORC_DATA_FILE_CLASSNAME = classOf[OrcDataFile].getCanonicalName
