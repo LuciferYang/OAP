@@ -33,7 +33,7 @@ class OapMetricsSuite extends QueryTest with SharedOapContext with BeforeAndAfte
     val path = Utils.createTempDir().getAbsolutePath
     currentPath = path
     sql(s"""CREATE TEMPORARY VIEW orc_test (a INT, b STRING)
-           | USING oap
+           | USING orc
            | OPTIONS (path '$path')""".stripMargin)
     sql(s"""CREATE TEMPORARY VIEW parquet_test (a INT, b STRING)
            | USING parquet
