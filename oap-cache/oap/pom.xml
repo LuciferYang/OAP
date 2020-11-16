@@ -478,7 +478,6 @@
           <includeTestSourceDirectory>true</includeTestSourceDirectory>
           <sourceDirectories>
             <directory>src/main/scala</directory>
-            <directory>src/main/spark2.4.4/scala</directory>
           </sourceDirectories>
           <testSourceDirectories>
             <directory>src/test/scala</directory>
@@ -655,11 +654,9 @@
           <includeTestSourceDirectory>true</includeTestSourceDirectory>
           <sourceDirectories>
             <directory>src/main/java</directory>
-            <directory>src/spark2.4.4/scala</directory>
           </sourceDirectories>
           <testSourceDirectories>
             <directory>src/test/java</directory>
-            <directory>src/test/spark2.4.4/java</directory>
           </testSourceDirectories>
           <configLocation>${basedir}/checkstyle.xml</configLocation>
           <outputFile>${basedir}/target/checkstyle-output.xml</outputFile>
@@ -704,8 +701,6 @@
             </goals>
             <configuration>
               <sources>
-                <source>src/main/spark2.4.4/java</source>
-                <source>src/main/spark2.4.4/scala</source>
                 <source>src/main/parquet1.10.1/java</source>
                 <source>src/main/orc-1.5.5-nohive/java</source>
               </sources>
